@@ -6,59 +6,71 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # ビルド
-cargo build
+cargo build --workspace
 
 # リリースビルド
-cargo build --release
+cargo build --workspace --release
 
-# 実行
-cargo run -- <path/to/file.md>
+# TUI 実行
+cargo run -p mdview-tui -- <path/to/file.md>
+
+# JSON 出力
+cargo run -p mdview-json -- <path/to/file.md>
 
 # テスト
-cargo test
+cargo test --workspace
 
 # 特定テスト
-cargo test <test_name>
+cargo test -p mdview-core <test_name>
 
 # Lint
-cargo clippy
+cargo clippy --workspace
 
 # フォーマット
-cargo fmt
+cargo fmt --all
 ```
 
-バイナリ名は `mdview`（`cargo install` 後は `mdview <file.md>` で起動）。
+バイナリ名は `mdview`（TUI）と `mdview-json`（JSON出力）。`cargo install` 後はそれぞれ直接起動可能。
 
 ## アーキテクチャ
 
 ### 全体構造
 
-Rust製のTUIアプリ。`ratatui` + `crossterm` で描画・入力、`pulldown-cmark` でMarkdownパース、`syntect` でコードハイライト、`notify-debouncer-full` でファイル監視を行う。
+Cargo ワークスペース構成。`mdview-core` でパース、`mdview-tui` で TUI 表示、`mdview-json` で JSON 出力。
 
 ```
-src/
-  main.rs          # CLIエントリポイント（clap）
-  lib.rs           # モジュール公開
-  app.rs           # App構造体: イベントループ・レイアウト・状態管理
-  types.rs         # StyledSpan, StyledLine, TocEntry
-  parser/
-    mod.rs         # pub use
-    markdown.rs    # parse_markdown(): MD→StyledLine+TocEntry変換
-    highlighter.rs # Highlighter: syntectによるコードハイライト
-  ui/
-    mod.rs
-    viewer.rs      # 本文描画
-    toc.rs         # TOCサイドパネル描画
-    statusbar.rs   # ステータスバー描画
-  watcher.rs       # FileWatcher: ファイル変更検知
+mdview-core/        # ライブラリクレート（ratatui 非依存）
+  src/
+    lib.rs
+    types.rs        # Span, SpanKind, Line, Document, TocEntry（serde付き）
+    parser.rs       # parse_markdown(): MD → Document 変換
+
+mdview-tui/         # TUI バイナリ
+  src/
+    main.rs         # CLIエントリポイント（clap）
+    lib.rs          # モジュール公開
+    app.rs          # App構造体: イベントループ・レイアウト・状態管理
+    types.rs        # StyledSpan, StyledLine
+    style.rs        # SpanKind → ratatui::Style 変換・Document → StyledLine 変換
+    highlighter.rs  # Highlighter: syntectによるコードハイライト
+    ui/
+      viewer.rs     # 本文描画
+      toc.rs        # TOCサイドパネル描画
+      statusbar.rs  # ステータスバー描画
+    watcher.rs      # FileWatcher: ファイル変更検知
+
+mdview-json/        # JSON 出力バイナリ（neovim/electron 連携用）
+  src/
+    main.rs         # ファイル読み込み → parse_markdown → stdout JSON
 ```
 
 ### データフロー
 
-1. `App::new()` → `FileWatcher` 起動・`parse_markdown()` でロード
-2. `parse_markdown()` → `Vec<StyledLine>` と `Vec<TocEntry>` を返す
-3. `StyledLine = Vec<StyledSpan>` — テキストと `ratatui::Style` のペア
-4. メインループ: ファイル変更 (`reload_rx`) を50msポーリング → 再ロード → 描画
+1. `parse_markdown(text)` → `Document { lines: Vec<Line>, toc: Vec<TocEntry> }`
+2. `Line = Vec<Span>` — テキストとセマンティック種別（`SpanKind`）のペア
+3. **mdview-tui**: `convert_document(&doc, &hl)` → `Vec<StyledLine>` に変換して ratatui で描画
+4. **mdview-json**: `serde_json::to_string(&doc)` → stdout 出力
+5. メインループ: ファイル変更 (`reload_rx`) を50msポーリング → 再ロード → 描画
 
 ### キーバインド
 
