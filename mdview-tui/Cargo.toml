@@ -1,0 +1,18 @@
+[package]
+name = "mdview-tui"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.86"
+
+[[bin]]
+name = "mdview"
+path = "src/main.rs"
+
+[dependencies]
+mdview-core = { path = "../mdview-core" }
+ratatui = "0.30.0"
+crossterm = "0.29.0"
+syntect = { version = "5.3.0", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
+notify-debouncer-full = "0.4.0"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }

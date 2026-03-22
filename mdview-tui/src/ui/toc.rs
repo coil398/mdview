@@ -4,7 +4,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, List, ListItem, ListState};
 use ratatui::Frame;
 
-use crate::types::TocEntry;
+use mdview_core::TocEntry;
 
 pub fn render(frame: &mut Frame, area: Rect, toc: &[TocEntry], toc_sel: usize) {
     let block = Block::bordered().title(Line::from(" ≡ Contents "));

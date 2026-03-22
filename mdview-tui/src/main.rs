@@ -13,6 +13,6 @@ fn main() -> anyhow::Result<()> {
         eprintln!("File not found: {}", cli.file.display());
         std::process::exit(1);
     }
-    let mut app = tui_md_viewer::app::App::new(cli.file)?;
+    let mut app = mdview_tui::app::App::new(cli.file)?;
     app.run()
 }

@@ -7,9 +7,12 @@ use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::parser::Highlighter;
-use crate::parser::parse_markdown;
-use crate::types::{StyledLine, TocEntry};
+use mdview_core::parser::parse_markdown;
+use mdview_core::TocEntry;
+
+use crate::highlighter::Highlighter;
+use crate::style::convert_document;
+use crate::types::StyledLine;
 use crate::ui::{statusbar, toc, viewer};
 use crate::watcher::FileWatcher;
 
@@ -49,7 +52,8 @@ impl App {
 
     pub fn load(&mut self) -> Result<()> {
         let text = std::fs::read_to_string(&self.filepath)?;
-        let (lines, toc) = parse_markdown(&text, &self.highlighter);
+        let doc = parse_markdown(&text);
+        let (lines, toc) = convert_document(&doc, &self.highlighter);
         self.lines = lines;
         self.toc = toc;
         Ok(())
