@@ -1,3 +1,6 @@
 /target
 /.serena
 /docs
+mdview-electron/node_modules/
+mdview-electron/wasm/
+mdview-core/pkg/

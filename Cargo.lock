@@ -860,6 +860,7 @@ dependencies = [
  "pulldown-cmark",
  "serde",
  "serde_json",
+ "wasm-bindgen",
 ]
 
 [[package]]

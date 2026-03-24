@@ -28,6 +28,15 @@ cargo clippy --workspace
 
 # フォーマット
 cargo fmt --all
+
+# WASM ビルド
+wasm-pack build mdview-core --target web --features wasm --out-dir mdview-electron/wasm
+
+# Electron 起動（WASM ビルド済みの場合）
+cd mdview-electron && npm install && npm start
+
+# Electron 開発（WASM ビルドから起動）
+cd mdview-electron && npm run dev
 ```
 
 バイナリ名は `mdview`（TUI）と `mdview-json`（JSON出力）。`cargo install` 後はそれぞれ直接起動可能。
@@ -62,6 +71,16 @@ mdview-tui/         # TUI バイナリ
 mdview-json/        # JSON 出力バイナリ（neovim/electron 連携用）
   src/
     main.rs         # ファイル読み込み → parse_markdown → stdout JSON
+
+mdview-electron/    # Electron GUI アプリ（WASM 経由で mdview-core を利用）
+  main.js           # Electron メインプロセス（ウィンドウ管理・ファイル読み込み・メニュー）
+  preload.js        # コンテキストブリッジ（IPC API を renderer に公開）
+  renderer/
+    index.html      # メインウィンドウ HTML
+    renderer.js     # WASM 読み込み・Markdown レンダリング・TOC 構築
+    style.css       # Catppuccin Mocha テーマ CSS
+  wasm/             # wasm-pack ビルド成果物（.gitignore 対象）
+  package.json      # npm パッケージ定義（electron・highlight.js）
 ```
 
 ### データフロー
@@ -90,3 +109,10 @@ mdview-json/        # JSON 出力バイナリ（neovim/electron 連携用）
 - `syntect` のテーマは `base16-ocean.dark` を使用
 - コードブロックの背景色は設定しない（ターミナルのデフォルト背景を壊さないため）
 - Rust edition 2021 / MSRV 1.86
+- mdview-core の WASM ビルドには `--features wasm` が必要（`wasm-bindgen` は optional dependency）
+- `crate-type = ["lib", "cdylib"]` で通常 Rust ライブラリと WASM の両方を同時提供
+- Electron renderer は `file://` プロトコルで動作するため、highlight.js は ESM の `import()` で `node_modules/highlight.js/es/index.js` を読み込む（CommonJS の `<script>` タグ読み込みは不可）
+- Electron IPC ではファイルパスをユーザー入力から直接受け取らない（`dialog.showOpenDialog` 経由のみ）。`file:read` のような汎用 IPC は作らない
+- リンク URL は `https://`、`http://`、`mailto:` のみ許可し、`javascript:` スキーム等は `#` に置換する
+- `ipcRenderer.on` は登録前に `removeAllListeners` を呼ぶか、一度限りの登録にしてリスナー蓄積を防ぐ
+- `SpanKind` の serde シリアライズは enum タグ形式（文字列 or オブジェクト）。JS 側では `typeof kind === 'string'` で判定

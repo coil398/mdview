@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>mdview</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="toolbar">
+    <button id="open-btn">ファイルを開く</button>
+    <span id="file-name">ファイルが開かれていません</span>
+  </div>
+  <div id="app">
+    <aside id="toc">
+      <div id="toc-header">目次</div>
+      <nav id="toc-nav"></nav>
+    </aside>
+    <main id="content">
+      <div id="markdown-body">
+        <p class="placeholder">Ctrl+O またはボタンで Markdown ファイルを開いてください。</p>
+      </div>
+    </main>
+  </div>
+  <script type="module" src="renderer.js"></script>
+</body>
+</html>
