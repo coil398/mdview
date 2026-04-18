@@ -12,26 +12,34 @@ pub fn render(
     scroll: usize,
     total: usize,
     toc_open: bool,
+    status_error: Option<&str>,
 ) {
-    let filename = filepath.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    let pct = if total > 1 {
-        (100 * scroll / (total - 1)).min(100)
+    let (status, bg) = if let Some(msg) = status_error {
+        (format!(" [ERROR] {}", msg), Color::Red)
     } else {
-        100
+        let filename = filepath.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let pct = if total > 1 {
+            (100 * scroll / (total - 1)).min(100)
+        } else {
+            100
+        };
+        let toc_hint = if toc_open { "[t]close" } else { "[t]TOC" };
+        (
+            format!(
+                " {}  {}/{}  {}%  {}  [j/k]scroll [g/G]top/end [r]force-reload [q]quit",
+                filename,
+                scroll + 1,
+                total,
+                pct,
+                toc_hint
+            ),
+            Color::Blue,
+        )
     };
-    let toc_hint = if toc_open { "[t]close" } else { "[t]TOC" };
-    let status = format!(
-        " {}  {}/{}  {}%  {}  [j/k]scroll [g/G]top/end [r]force-reload [q]quit",
-        filename,
-        scroll + 1,
-        total,
-        pct,
-        toc_hint
-    );
 
     let paragraph = Paragraph::new(Line::from(status)).style(
         Style::default()
-            .bg(Color::Blue)
+            .bg(bg)
             .fg(Color::White)
             .add_modifier(Modifier::BOLD),
     );

@@ -28,6 +28,10 @@ pub struct App {
     pub highlighter: Arc<Highlighter>,
     pub reload_rx: Receiver<()>,
     _watcher: FileWatcher,
+    /// 最後に描画した wrap 後行数。max_scroll 計算に使う。
+    pub wrapped_line_count: usize,
+    /// リロードエラーメッセージと表示開始時刻。5 秒後に自動クリア。
+    pub status_error: Option<(String, std::time::Instant)>,
 }
 
 impl App {
@@ -47,6 +51,8 @@ impl App {
             highlighter,
             reload_rx: rx,
             _watcher: watcher,
+            wrapped_line_count: 0,
+            status_error: None,
         };
 
         app.load()?;
@@ -64,6 +70,9 @@ impl App {
         self.lines = lines;
         self.toc = toc;
         self.block_starts = block_starts;
+        if self.toc_sel >= self.toc.len() {
+            self.toc_sel = 0;
+        }
         Ok(())
     }
 
@@ -71,23 +80,41 @@ impl App {
         let mut terminal = ratatui::init();
 
         loop {
+            // エラーメッセージの自動クリア（5 秒経過で消去）
+            if let Some((_, t)) = &self.status_error {
+                if t.elapsed() >= std::time::Duration::from_secs(5) {
+                    self.status_error = None;
+                }
+            }
+
             // 毎ループでリロードチェック
             if self.reload_rx.try_recv().is_ok() {
                 // 余分な通知を drain する
                 while self.reload_rx.try_recv().is_ok() {}
-                let _ = self.load();
+                if let Err(e) = self.load() {
+                    self.status_error =
+                        Some((format!("Reload failed: {}", e), std::time::Instant::now()));
+                }
             }
 
             // viewport_height を描画前に取得
             let viewport_height = terminal.size().map(|s| s.height as usize).unwrap_or(24);
             let content_height = viewport_height.saturating_sub(1); // ステータスバー分
 
-            // スクロール上限クランプ
-            let max_scroll = self.lines.len().saturating_sub(content_height);
+            // スクロール上限クランプ（wrap 後行数ベース。初回描画前は document 行数でフォールバック）
+            let max_scroll = if self.wrapped_line_count > 0 {
+                self.wrapped_line_count.saturating_sub(content_height)
+            } else {
+                self.lines.len().saturating_sub(content_height)
+            };
             self.scroll = self.scroll.min(max_scroll);
 
-            // 描画
-            terminal.draw(|frame| self.render(frame))?;
+            // 描画。viewer::render の戻り値（wrap 後行数）を次ループの max_scroll 計算に使う
+            let mut new_wrapped_line_count = 0usize;
+            terminal.draw(|frame| {
+                new_wrapped_line_count = self.render(frame);
+            })?;
+            self.wrapped_line_count = new_wrapped_line_count;
 
             // ノンブロッキング入力
             if event::poll(Duration::from_millis(50))? {
@@ -96,7 +123,11 @@ impl App {
                         continue;
                     }
 
-                    let max_scroll = self.lines.len().saturating_sub(content_height);
+                    let max_scroll = if self.wrapped_line_count > 0 {
+                        self.wrapped_line_count.saturating_sub(content_height)
+                    } else {
+                        self.lines.len().saturating_sub(content_height)
+                    };
 
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => break,
@@ -139,11 +170,18 @@ impl App {
 
                         KeyCode::Char('t') => {
                             self.toc_open = !self.toc_open;
-                            self.toc_sel = 0;
+                            if self.toc_open && self.toc_sel >= self.toc.len() {
+                                self.toc_sel = 0;
+                            }
                         }
 
                         KeyCode::Char('r') => {
-                            let _ = self.load();
+                            if let Err(e) = self.load() {
+                                self.status_error = Some((
+                                    format!("Reload failed: {}", e),
+                                    std::time::Instant::now(),
+                                ));
+                            }
                         }
 
                         KeyCode::Enter => {
@@ -169,7 +207,7 @@ impl App {
         Ok(())
     }
 
-    fn render(&self, frame: &mut Frame) {
+    fn render(&self, frame: &mut Frame) -> usize {
         let size = frame.area();
 
         // ステータスバー領域と本文領域を分割
@@ -203,8 +241,8 @@ impl App {
             toc::render(frame, toc_area, &self.toc, self.toc_sel);
         }
 
-        // ビューア描画
-        viewer::render(frame, viewer_area, &self.lines, self.scroll);
+        // ビューア描画（wrap 後行数を返す）
+        let wrapped_line_count = viewer::render(frame, viewer_area, &self.lines, self.scroll);
 
         // ステータスバー描画
         statusbar::render(
@@ -214,6 +252,9 @@ impl App {
             self.scroll,
             self.lines.len().max(1),
             self.toc_open,
+            self.status_error.as_ref().map(|(m, _)| m.as_str()),
         );
+
+        wrapped_line_count
     }
 }

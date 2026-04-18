@@ -8,7 +8,9 @@ use pulldown_cmark::{
     Alignment as PdAlignment, CodeBlockKind, Event, Options, Parser, Tag, TagEnd,
 };
 
-use crate::types::{Alignment, Block, Cell, Document, ListItem, Span, SpanKind, TocEntry};
+use crate::types::{
+    Alignment, Block, Cell, Document, ListItem, Span, SpanKind, TocEntry, SCHEMA_VERSION,
+};
 
 // ===========================================================================
 // Public API
@@ -134,6 +136,7 @@ impl ParseState {
             self.append_block_to_top(block);
         }
         Document {
+            schema_version: SCHEMA_VERSION,
             blocks: self.blocks,
             toc: self.toc,
         }
@@ -956,6 +959,13 @@ mod tests {
         let blocks = &items[0].blocks;
         assert!(blocks.iter().any(|b| matches!(b, Block::Paragraph { .. })));
         assert!(blocks.iter().any(|b| matches!(b, Block::CodeBlock { .. })));
+    }
+
+    #[test]
+    fn schema_version_is_current() {
+        let doc = parse_markdown("# hello");
+        assert_eq!(doc.schema_version, crate::types::SCHEMA_VERSION);
+        assert_eq!(doc.schema_version, 2);
     }
 
     #[test]

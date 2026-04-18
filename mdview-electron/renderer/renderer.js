@@ -1,5 +1,7 @@
 import init, { parse_markdown_to_json } from '../wasm/mdview_core.js';
 
+const EXPECTED_SCHEMA_VERSION = 2;
+
 let hljs = null;
 
 async function loadHighlightJs() {
@@ -199,15 +201,29 @@ function buildToc(toc) {
 // Markdown をレンダリング
 async function renderMarkdown(text) {
   const jsonStr = parse_markdown_to_json(text);
-  let doc;
+  let result;
   try {
-    doc = JSON.parse(jsonStr);
+    result = JSON.parse(jsonStr);
   } catch (e) {
     document.getElementById('markdown-body').textContent = 'Parse error: ' + e.message;
     return;
   }
-  if (doc.error) {
-    document.getElementById('markdown-body').textContent = 'Error: ' + doc.error;
+  if (result.error) {
+    const { kind, message } = result.error;
+    document.getElementById('markdown-body').textContent =
+      'Error (' + kind + '): ' + message;
+    return;
+  }
+  const doc = result.ok;
+  if (!doc || typeof doc.schema_version !== 'number') {
+    document.getElementById('markdown-body').textContent =
+      'Unsupported response: missing schema_version';
+    return;
+  }
+  if (doc.schema_version !== EXPECTED_SCHEMA_VERSION) {
+    document.getElementById('markdown-body').textContent =
+      'Unsupported schema version: got ' + doc.schema_version +
+      ', expected ' + EXPECTED_SCHEMA_VERSION;
     return;
   }
 

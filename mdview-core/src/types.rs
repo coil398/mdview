@@ -76,8 +76,12 @@ pub struct TocEntry {
     pub level: u8,
 }
 
+/// JSON スキーマのバージョン番号。破壊的変更ごとに増加する。
+pub const SCHEMA_VERSION: u32 = 2;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Document {
+    pub schema_version: u32,
     pub blocks: Vec<Block>,
     pub toc: Vec<TocEntry>,
 }
