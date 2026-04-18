@@ -6,12 +6,14 @@
 
 use mdview_core::{Block, Cell, Document, ListItem, Span, SpanKind, TocEntry};
 use ratatui::style::{Color, Modifier, Style};
+use unicode_width::UnicodeWidthStr;
 
 use crate::highlighter::Highlighter;
 use crate::types::{StyledLine, StyledSpan};
 
-// テーブル描画パラメータ（フェーズ 1 では固定列幅）
-const TABLE_COL_WIDTH: usize = 20;
+// テーブル描画パラメータ（各列のコンテンツ最大幅を min/max でクランプ）
+const TABLE_COL_MIN_WIDTH: usize = 3;
+const TABLE_COL_MAX_WIDTH: usize = 40;
 
 #[derive(Debug)]
 pub struct StyledOutput {
@@ -293,15 +295,17 @@ fn render_table(
     if cols == 0 {
         return;
     }
+    let col_widths = compute_table_col_widths(header, rows);
     let header_text: Vec<String> = header
         .iter()
         .map(cell_to_plain_text)
-        .map(|t| pad_or_truncate(&t, TABLE_COL_WIDTH))
+        .enumerate()
+        .map(|(i, t)| pad_or_truncate(&t, col_widths[i]))
         .collect();
     let separator: String = (0..cols)
-        .map(|_| "─".repeat(TABLE_COL_WIDTH))
+        .map(|i| "─".repeat(col_widths[i]))
         .collect::<Vec<_>>()
-        .join("┼");
+        .join("─┼─");
 
     let header_style = Style::default().add_modifier(Modifier::BOLD);
     let border_style = Style::default().fg(Color::DarkGray);
@@ -329,8 +333,10 @@ fn render_table(
     // 各行
     for row in rows {
         let row_text: Vec<String> = (0..cols)
-            .map(|i| row.get(i).map(cell_to_plain_text).unwrap_or_default())
-            .map(|t| pad_or_truncate(&t, TABLE_COL_WIDTH))
+            .map(|i| {
+                let t = row.get(i).map(cell_to_plain_text).unwrap_or_default();
+                pad_or_truncate(&t, col_widths[i])
+            })
             .collect();
         let mut line: StyledLine = Vec::new();
         push_indent(&mut line, indent);
@@ -350,18 +356,61 @@ fn cell_to_plain_text(cell: &Cell) -> String {
         .collect::<String>()
 }
 
-/// 表示幅を考慮せず文字数で固定幅にする（フェーズ 1 の固定幅描画）。
+/// display width ベースで文字列を指定幅にパディング or 切り詰める。
+/// - s.width() < width → 不足分をスペース埋め
+/// - s.width() > width → 先頭から width 以内に収まる文字だけ残す
+/// - s.width() == width → そのまま
 fn pad_or_truncate(s: &str, width: usize) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() >= width {
-        chars.into_iter().take(width).collect()
-    } else {
-        let mut out: String = chars.into_iter().collect();
-        for _ in 0..(width - s.chars().count()) {
+    let current = UnicodeWidthStr::width(s);
+    if current == width {
+        return s.to_string();
+    }
+    if current < width {
+        let mut out = String::from(s);
+        for _ in 0..(width - current) {
             out.push(' ');
         }
-        out
+        return out;
     }
+    // current > width: 文字単位で幅を積み上げて width を超えない範囲で切る
+    let mut out = String::new();
+    let mut acc = 0usize;
+    for ch in s.chars() {
+        let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if acc + w > width {
+            break;
+        }
+        out.push(ch);
+        acc += w;
+    }
+    // 切り詰めの結果 acc < width ならパディング（全角文字が width 境界で入らない場合）
+    for _ in 0..(width - acc) {
+        out.push(' ');
+    }
+    out
+}
+
+/// 各列の display width を、ヘッダと全行の最大値から決める（min/max でクランプ）。
+fn compute_table_col_widths(header: &[Cell], rows: &[Vec<Cell>]) -> Vec<usize> {
+    let cols = header.len();
+    let mut widths = vec![TABLE_COL_MIN_WIDTH; cols];
+    for (i, cell) in header.iter().enumerate() {
+        let w = UnicodeWidthStr::width(cell_to_plain_text(cell).as_str());
+        widths[i] = widths[i].max(w);
+    }
+    for row in rows {
+        for (i, cell) in row.iter().enumerate() {
+            if i >= cols {
+                break; // 行が header より長い異常ケースは切り捨て
+            }
+            let w = UnicodeWidthStr::width(cell_to_plain_text(cell).as_str());
+            widths[i] = widths[i].max(w);
+        }
+    }
+    for w in widths.iter_mut() {
+        *w = (*w).clamp(TABLE_COL_MIN_WIDTH, TABLE_COL_MAX_WIDTH);
+    }
+    widths
 }
 
 fn render_rule(ctx: &mut RenderCtx, indent: usize, quote_depth: usize) {
@@ -503,6 +552,202 @@ mod tests {
             link_span.style.add_modifier.contains(Modifier::UNDERLINED),
             "見出し内リンクに UNDERLINED が付いていない: {:?}",
             link_span.style
+        );
+    }
+
+    #[test]
+    fn table_renders_with_japanese_cells() {
+        let md = "| 名前 | 役割 |\n|------|------|\n| 太郎 | 開発 |\n| 花子 | 設計 |\n";
+        let out = render(md);
+        let has_separator = out.lines.iter().any(|l| line_to_plain(l).contains("┼"));
+        assert!(
+            has_separator,
+            "日本語テーブルのセパレータが描画されない: {out:?}"
+        );
+        // ヘッダ行と全データ行が存在
+        let header_line = out
+            .lines
+            .iter()
+            .find(|l| line_to_plain(l).contains("名前"))
+            .expect("ヘッダ行が見つからない");
+        let taro_line = out
+            .lines
+            .iter()
+            .find(|l| line_to_plain(l).contains("太郎"))
+            .expect("太郎行が見つからない");
+        // display width が一致（矩形が崩れない）
+        let header_width =
+            unicode_width::UnicodeWidthStr::width(line_to_plain(header_line).as_str());
+        let taro_width = unicode_width::UnicodeWidthStr::width(line_to_plain(taro_line).as_str());
+        assert_eq!(
+            header_width, taro_width,
+            "ヘッダと行の display width が一致しない"
+        );
+    }
+
+    #[test]
+    fn table_renders_with_emoji_cells() {
+        let md = "| Status | Count |\n|--------|-------|\n| 👍 OK  | 10    |\n| 🔥 NG  | 3     |\n";
+        let out = render(md);
+        let has_separator = out.lines.iter().any(|l| line_to_plain(l).contains("┼"));
+        assert!(has_separator, "絵文字テーブルのセパレータが描画されない");
+        // 絵文字が含まれていることを確認
+        let ok_line = out
+            .lines
+            .iter()
+            .find(|l| line_to_plain(l).contains("👍"))
+            .expect("絵文字行が見つからない");
+        let ng_line = out
+            .lines
+            .iter()
+            .find(|l| line_to_plain(l).contains("🔥"))
+            .expect("絵文字行が見つからない");
+        let ok_width = unicode_width::UnicodeWidthStr::width(line_to_plain(ok_line).as_str());
+        let ng_width = unicode_width::UnicodeWidthStr::width(line_to_plain(ng_line).as_str());
+        assert_eq!(
+            ok_width, ng_width,
+            "絵文字を含む行同士の display width が一致しない"
+        );
+    }
+
+    #[test]
+    fn table_column_width_adapts_to_longest_cell() {
+        // 1 列目のセル最大 display width は「長い日本語テキスト」の 16
+        let md = "| 名前 | 値 |\n|------|----|\n| 長い日本語テキスト | 1 |\n| a | 2 |\n";
+        let out = render(md);
+        // ヘッダ行と最長行の display width が一致すること
+        let lines_with_pipe: Vec<String> = out
+            .lines
+            .iter()
+            .map(line_to_plain)
+            .filter(|s| s.contains("│"))
+            .collect();
+        assert!(!lines_with_pipe.is_empty(), "テーブル行が見つからない");
+        let widths: Vec<usize> = lines_with_pipe
+            .iter()
+            .map(|s| unicode_width::UnicodeWidthStr::width(s.as_str()))
+            .collect();
+        let first = widths[0];
+        for w in &widths {
+            assert_eq!(
+                *w, first,
+                "行ごとの display width がそろっていない: {widths:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn table_truncates_overlong_cell() {
+        // 50 文字の a を含むセル → 40 文字にクランプされる
+        let long = "a".repeat(50);
+        let md = format!("| col |\n|-----|\n| {} |\n", long);
+        let out = render(&md);
+        let data_line = out
+            .lines
+            .iter()
+            .find(|l| {
+                let s = line_to_plain(l);
+                s.contains('a') && !s.contains('─') && !s.contains("col")
+            })
+            .expect("データ行が見つからない");
+        let plain = line_to_plain(data_line);
+        // 40 文字のキャップ内に収まっている（a が 40 個以下）
+        let a_count = plain.chars().filter(|c| *c == 'a').count();
+        assert!(
+            a_count <= 40,
+            "セルが 40 文字以内にクランプされていない: {a_count}"
+        );
+    }
+
+    #[test]
+    fn emoji_width_measurement() {
+        // 仮説A: unicode-width が 🎉 と 🚀 に対して何を返すか確認
+        let party = "🎉";
+        let rocket = "🚀";
+
+        let party_width = party.width();
+        let rocket_width = rocket.width();
+
+        println!("🎉 (party) width: {}", party_width);
+        println!("🚀 (rocket) width: {}", rocket_width);
+
+        // 両方とも 2 であること
+        assert_eq!(
+            party_width, 2,
+            "🎉 should have width 2 according to unicode-width"
+        );
+        assert_eq!(
+            rocket_width, 2,
+            "🚀 should have width 2 according to unicode-width"
+        );
+    }
+
+    #[test]
+    fn table_with_party_and_rocket_emoji() {
+        // 実際のテストケース: 🎉 と 🚀 を含む Table
+        let md = "| Emoji | Desc |\n|-------|------|\n| 🎉 | party |\n| 🚀 | rocket |\n";
+        let out = render(md);
+
+        // テーブルが正常にレンダリングされていることを確認
+        let has_separator = out.lines.iter().any(|l| line_to_plain(l).contains("┼"));
+        assert!(has_separator, "テーブルセパレータが見つからない");
+
+        // party 行と rocket 行の display width が一致していること
+        let party_line = out
+            .lines
+            .iter()
+            .find(|l| line_to_plain(l).contains("party"))
+            .expect("party 行が見つからない");
+        let rocket_line = out
+            .lines
+            .iter()
+            .find(|l| line_to_plain(l).contains("rocket"))
+            .expect("rocket 行が見つからない");
+
+        let party_text = line_to_plain(party_line);
+        let rocket_text = line_to_plain(rocket_line);
+
+        let party_width = party_text.width();
+        let rocket_width = rocket_text.width();
+
+        println!("party line: '{}' (width: {})", party_text, party_width);
+        println!("rocket line: '{}' (width: {})", rocket_text, rocket_width);
+
+        assert_eq!(
+            party_width, rocket_width,
+            "party と rocket 行の display width が一致していない。party={}, rocket={}",
+            party_width, rocket_width
+        );
+    }
+
+    #[test]
+    fn table_separator_matches_data_row_width() {
+        // ヘッダ行と区切り行の display width が完全一致すること。
+        // render_table で区切り線を "─┼─"（3幅）で join するため、
+        // データ行の " │ "（3幅）と揃う。
+        let md = "| Name | Age |\n|------|-----|\n| Alice | 30 |\n";
+        let out = render(md);
+
+        let header_line = out
+            .lines
+            .iter()
+            .find(|l| line_to_plain(l).contains("Name"))
+            .expect("ヘッダ行が見つからない");
+        let sep_line = out
+            .lines
+            .iter()
+            .find(|l| line_to_plain(l).contains("┼"))
+            .expect("区切り行が見つからない");
+
+        let header_text = line_to_plain(header_line);
+        let sep_text = line_to_plain(sep_line);
+
+        let header_width = unicode_width::UnicodeWidthStr::width(header_text.as_str());
+        let sep_width = unicode_width::UnicodeWidthStr::width(sep_text.as_str());
+
+        assert_eq!(
+            header_width, sep_width,
+            "ヘッダ行と区切り行の display width が一致しない: header={header_width}, sep={sep_width}"
         );
     }
 }

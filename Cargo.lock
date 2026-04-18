@@ -884,6 +884,7 @@ dependencies = [
  "notify-debouncer-full",
  "ratatui",
  "syntect",
+ "unicode-width",
 ]
 
 [[package]]
