@@ -11,7 +11,7 @@ use mdview_core::parser::parse_markdown;
 use mdview_core::TocEntry;
 
 use crate::highlighter::Highlighter;
-use crate::style::convert_document;
+use crate::style::{convert_document, StyledOutput};
 use crate::types::StyledLine;
 use crate::ui::{statusbar, toc, viewer};
 use crate::watcher::FileWatcher;
@@ -20,6 +20,8 @@ pub struct App {
     pub filepath: PathBuf,
     pub lines: Vec<StyledLine>,
     pub toc: Vec<TocEntry>,
+    /// `Document.blocks[i]` の描画開始行 index。TOC ジャンプに使う。
+    pub block_starts: Vec<usize>,
     pub scroll: usize,
     pub toc_open: bool,
     pub toc_sel: usize,
@@ -38,6 +40,7 @@ impl App {
             filepath: path,
             lines: Vec::new(),
             toc: Vec::new(),
+            block_starts: Vec::new(),
             scroll: 0,
             toc_open: false,
             toc_sel: 0,
@@ -53,9 +56,14 @@ impl App {
     pub fn load(&mut self) -> Result<()> {
         let text = std::fs::read_to_string(&self.filepath)?;
         let doc = parse_markdown(&text);
-        let (lines, toc) = convert_document(&doc, &self.highlighter);
+        let StyledOutput {
+            lines,
+            block_starts,
+            toc,
+        } = convert_document(&doc, &self.highlighter);
         self.lines = lines;
         self.toc = toc;
+        self.block_starts = block_starts;
         Ok(())
     }
 
@@ -96,8 +104,7 @@ impl App {
                         KeyCode::Char('j') | KeyCode::Down => {
                             if self.toc_open {
                                 if !self.toc.is_empty() {
-                                    self.toc_sel =
-                                        (self.toc_sel + 1).min(self.toc.len() - 1);
+                                    self.toc_sel = (self.toc_sel + 1).min(self.toc.len() - 1);
                                 }
                             } else {
                                 self.scroll = (self.scroll + 1).min(max_scroll);
@@ -118,9 +125,8 @@ impl App {
                         }
 
                         KeyCode::PageUp => {
-                            self.scroll = self
-                                .scroll
-                                .saturating_sub(content_height.saturating_sub(1));
+                            self.scroll =
+                                self.scroll.saturating_sub(content_height.saturating_sub(1));
                         }
 
                         KeyCode::Char('g') => {
@@ -142,7 +148,13 @@ impl App {
 
                         KeyCode::Enter => {
                             if self.toc_open && !self.toc.is_empty() {
-                                self.scroll = self.toc[self.toc_sel].line_index.min(max_scroll);
+                                let entry = &self.toc[self.toc_sel];
+                                let target_line = self
+                                    .block_starts
+                                    .get(entry.block_index)
+                                    .copied()
+                                    .unwrap_or(0);
+                                self.scroll = target_line.min(max_scroll);
                                 self.toc_open = false;
                             }
                         }
@@ -177,10 +189,7 @@ impl App {
             let toc_width = 40u16.min(content_area.width / 2);
             let horizontal_chunks = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Length(toc_width),
-                    Constraint::Min(0),
-                ])
+                .constraints([Constraint::Length(toc_width), Constraint::Min(0)])
                 .split(content_area);
             toc_area_opt = Some(horizontal_chunks[0]);
             viewer_area = horizontal_chunks[1];

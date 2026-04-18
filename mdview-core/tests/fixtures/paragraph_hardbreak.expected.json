@@ -1,0 +1,43 @@
+{
+  "blocks": [
+    {
+      "Paragraph": {
+        "lines": [
+          [
+            {
+              "text": "最初の段落です。",
+              "kind": "Normal"
+            },
+            {
+              "text": " ",
+              "kind": "Normal"
+            },
+            {
+              "text": "ソフトブレークで続く文。",
+              "kind": "Normal"
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "Paragraph": {
+        "lines": [
+          [
+            {
+              "text": "二つ目の段落の最初の行",
+              "kind": "Normal"
+            }
+          ],
+          [
+            {
+              "text": "ハードブレークで分かれた行",
+              "kind": "Normal"
+            }
+          ]
+        ]
+      }
+    }
+  ],
+  "toc": []
+}

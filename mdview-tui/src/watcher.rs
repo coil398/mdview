@@ -1,8 +1,6 @@
 use anyhow::Result;
 use notify_debouncer_full::notify::RecursiveMode;
-use notify_debouncer_full::{
-    new_debouncer, DebounceEventResult, Debouncer, RecommendedCache,
-};
+use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, RecommendedCache};
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::time::Duration;
@@ -23,8 +21,7 @@ impl FileWatcher {
                         let matches = event.paths.iter().any(|p| {
                             // ファイルパスが一致する場合のみ通知
                             p == &path_clone
-                                || p.canonicalize().ok()
-                                    == path_clone.canonicalize().ok()
+                                || p.canonicalize().ok() == path_clone.canonicalize().ok()
                         });
                         if matches {
                             let _ = tx.send(());

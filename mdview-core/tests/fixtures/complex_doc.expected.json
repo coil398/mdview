@@ -1,0 +1,219 @@
+{
+  "blocks": [
+    {
+      "Heading": {
+        "level": 1,
+        "spans": [
+          {
+            "text": "複合ドキュメント",
+            "kind": "Normal"
+          }
+        ]
+      }
+    },
+    {
+      "Paragraph": {
+        "lines": [
+          [
+            {
+              "text": "これは段落の中に ",
+              "kind": "Normal"
+            },
+            {
+              "text": "太字",
+              "kind": "Bold"
+            },
+            {
+              "text": " と ",
+              "kind": "Normal"
+            },
+            {
+              "text": "斜体",
+              "kind": "Italic"
+            },
+            {
+              "text": " と ",
+              "kind": "Normal"
+            },
+            {
+              "text": "code",
+              "kind": "CodeInline"
+            },
+            {
+              "text": " と ",
+              "kind": "Normal"
+            },
+            {
+              "text": "リンク",
+              "kind": {
+                "Link": {
+                  "url": "https://example.com"
+                }
+              }
+            },
+            {
+              "text": " を含みます。",
+              "kind": "Normal"
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "Heading": {
+        "level": 2,
+        "spans": [
+          {
+            "text": "サブセクション",
+            "kind": "Normal"
+          }
+        ]
+      }
+    },
+    {
+      "List": {
+        "ordered": false,
+        "start": null,
+        "items": [
+          {
+            "blocks": [
+              {
+                "Paragraph": {
+                  "lines": [
+                    [
+                      {
+                        "text": "普通の項目",
+                        "kind": "Normal"
+                      }
+                    ]
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "blocks": [
+              {
+                "Paragraph": {
+                  "lines": [
+                    [
+                      {
+                        "text": "強調",
+                        "kind": "Bold"
+                      },
+                      {
+                        "text": "された項目",
+                        "kind": "Normal"
+                      }
+                    ]
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "blocks": [
+              {
+                "Paragraph": {
+                  "lines": [
+                    [
+                      {
+                        "text": "ネスト",
+                        "kind": "Normal"
+                      }
+                    ]
+                  ]
+                }
+              },
+              {
+                "List": {
+                  "ordered": false,
+                  "start": null,
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "Paragraph": {
+                            "lines": [
+                              [
+                                {
+                                  "text": "子 1",
+                                  "kind": "Normal"
+                                }
+                              ]
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "Paragraph": {
+                            "lines": [
+                              [
+                                {
+                                  "text": "子 2",
+                                  "kind": "Normal"
+                                }
+                              ]
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "BlockQuote": {
+        "blocks": [
+          {
+            "Paragraph": {
+              "lines": [
+                [
+                  {
+                    "text": "引用ブロック",
+                    "kind": "Normal"
+                  },
+                  {
+                    "text": " ",
+                    "kind": "Normal"
+                  },
+                  {
+                    "text": "二行目",
+                    "kind": "Normal"
+                  }
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "CodeBlock": {
+        "lang": "rust",
+        "code": "fn main() {\n    println!(\"hello\");\n}"
+      }
+    },
+    "Rule"
+  ],
+  "toc": [
+    {
+      "block_index": 0,
+      "title": "複合ドキュメント",
+      "level": 1
+    },
+    {
+      "block_index": 2,
+      "title": "サブセクション",
+      "level": 2
+    }
+  ]
+}

@@ -1,0 +1,93 @@
+{
+  "blocks": [
+    {
+      "BlockQuote": {
+        "blocks": [
+          {
+            "Paragraph": {
+              "lines": [
+                [
+                  {
+                    "text": "外側の引用",
+                    "kind": "Normal"
+                  }
+                ]
+              ]
+            }
+          },
+          {
+            "BlockQuote": {
+              "blocks": [
+                {
+                  "Paragraph": {
+                    "lines": [
+                      [
+                        {
+                          "text": "内側の引用",
+                          "kind": "Normal"
+                        }
+                      ]
+                    ]
+                  }
+                },
+                {
+                  "List": {
+                    "ordered": false,
+                    "start": null,
+                    "items": [
+                      {
+                        "blocks": [
+                          {
+                            "Paragraph": {
+                              "lines": [
+                                [
+                                  {
+                                    "text": "内側リスト 1",
+                                    "kind": "Normal"
+                                  }
+                                ]
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "blocks": [
+                          {
+                            "Paragraph": {
+                              "lines": [
+                                [
+                                  {
+                                    "text": "内側リスト 2",
+                                    "kind": "Normal"
+                                  }
+                                ]
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "Paragraph": {
+              "lines": [
+                [
+                  {
+                    "text": "戻った段落",
+                    "kind": "Normal"
+                  }
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "toc": []
+}

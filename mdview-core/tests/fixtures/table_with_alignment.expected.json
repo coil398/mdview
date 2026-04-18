@@ -1,0 +1,94 @@
+{
+  "blocks": [
+    {
+      "Table": {
+        "header": [
+          {
+            "spans": [
+              {
+                "text": "左寄せ",
+                "kind": "Normal"
+              }
+            ]
+          },
+          {
+            "spans": [
+              {
+                "text": "中央",
+                "kind": "Normal"
+              }
+            ]
+          },
+          {
+            "spans": [
+              {
+                "text": "右寄せ",
+                "kind": "Normal"
+              }
+            ]
+          }
+        ],
+        "rows": [
+          [
+            {
+              "spans": [
+                {
+                  "text": "a",
+                  "kind": "Normal"
+                }
+              ]
+            },
+            {
+              "spans": [
+                {
+                  "text": "b",
+                  "kind": "Normal"
+                }
+              ]
+            },
+            {
+              "spans": [
+                {
+                  "text": "c",
+                  "kind": "Normal"
+                }
+              ]
+            }
+          ],
+          [
+            {
+              "spans": [
+                {
+                  "text": "code",
+                  "kind": "CodeInline"
+                }
+              ]
+            },
+            {
+              "spans": [
+                {
+                  "text": "B",
+                  "kind": "Bold"
+                }
+              ]
+            },
+            {
+              "spans": [
+                {
+                  "text": "1",
+                  "kind": "Normal"
+                }
+              ]
+            }
+          ]
+        ],
+        "align": [
+          "Left",
+          "Center",
+          "Right"
+        ]
+      }
+    }
+  ],
+  "toc": []
+}

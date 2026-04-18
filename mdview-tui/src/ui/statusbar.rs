@@ -13,10 +13,7 @@ pub fn render(
     total: usize,
     toc_open: bool,
 ) {
-    let filename = filepath
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
+    let filename = filepath.file_name().and_then(|n| n.to_str()).unwrap_or("");
     let pct = if total > 1 {
         (100 * scroll / (total - 1)).min(100)
     } else {

@@ -227,6 +227,31 @@ hr {
   margin: 1.5em 0;
 }
 
+/* テーブル */
+table {
+  border-collapse: collapse;
+  margin: 1em 0;
+  width: 100%;
+  font-size: 0.95em;
+}
+
+th, td {
+  border: 1px solid var(--border);
+  padding: 0.4em 0.7em;
+  text-align: left;
+  vertical-align: top;
+}
+
+thead th {
+  background: var(--bg-surface);
+  color: var(--text);
+  font-weight: 600;
+}
+
+tbody tr:nth-child(even) td {
+  background: var(--bg-alt);
+}
+
 /* スクロールバー */
 ::-webkit-scrollbar {
   width: 8px;

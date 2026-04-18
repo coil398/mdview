@@ -25,11 +25,7 @@ pub fn render(frame: &mut Frame, area: Rect, toc: &[TocEntry], toc_sel: usize) {
 
     let list = List::new(items)
         .block(block)
-        .highlight_style(
-            Style::default()
-                .bg(Color::Cyan)
-                .fg(Color::Black),
-        );
+        .highlight_style(Style::default().bg(Color::Cyan).fg(Color::Black));
 
     let mut state = ListState::default();
     if !toc.is_empty() {
