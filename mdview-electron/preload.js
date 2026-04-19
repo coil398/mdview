@@ -26,4 +26,8 @@ contextBridge.exposeInMainWorld('mdview', {
     ipcRenderer.removeAllListeners('theme:changed');
     ipcRenderer.on('theme:changed', (_e, data) => cb(data));
   },
+  notes: {
+    get: (filePath) => ipcRenderer.invoke('notes:get', filePath),
+    set: (filePath, entries) => ipcRenderer.invoke('notes:set', { filePath, entries }),
+  },
 });

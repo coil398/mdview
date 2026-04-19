@@ -24,6 +24,83 @@ const watcherStates = new WeakMap();
 // watcherStates.get(webContents) => { watcher: fs.FSWatcher, watchedPath: string, debounceTimer: NodeJS.Timeout }
 const RELOAD_DEBOUNCE_MS = 80;   // TUI の notify_debouncer_full は 300ms だが、Electron/JS では軽いため 80ms に設定
 
+// ── notes.json 管理 ─────────────────────────────────────────────────────────
+
+const NOTES_SCHEMA_VERSION = 1;
+
+/**
+ * notes.json のパス解決。config.json と同じ XDG 規約。
+ */
+function getNotesPath() {
+  const xdg = process.env.XDG_CONFIG_HOME;
+  if (xdg && xdg.length > 0) {
+    return path.join(xdg, 'mdview', 'notes.json');
+  }
+  return path.join(os.homedir(), '.config', 'mdview', 'notes.json');
+}
+
+// in-memory キャッシュ。app.whenReady() で loadNotesStore() を呼んで初期化する。
+let notesStore = { schema_version: NOTES_SCHEMA_VERSION, notes_by_file: {} };
+
+function loadNotesStore() {
+  const p = getNotesPath();
+  if (!fs.existsSync(p)) {
+    notesStore = { schema_version: NOTES_SCHEMA_VERSION, notes_by_file: {} };
+    return;
+  }
+  try {
+    const text = fs.readFileSync(p, 'utf-8');
+    const parsed = JSON.parse(text);
+    if (typeof parsed !== 'object' || parsed === null) throw new Error('not an object');
+    if (typeof parsed.notes_by_file !== 'object' || parsed.notes_by_file === null) {
+      parsed.notes_by_file = {};
+    }
+    if (parsed.schema_version !== NOTES_SCHEMA_VERSION) {
+      console.warn(`mdview: notes.json schema_version mismatch (got ${parsed.schema_version}, expected ${NOTES_SCHEMA_VERSION}), coercing.`);
+      parsed.schema_version = NOTES_SCHEMA_VERSION;
+    }
+    notesStore = parsed;
+  } catch (e) {
+    console.warn(`mdview: failed to load notes (${p}): ${e}. using empty store.`);
+    notesStore = { schema_version: NOTES_SCHEMA_VERSION, notes_by_file: {} };
+  }
+}
+
+/**
+ * atomic write: tmp に書いて rename で置換。
+ * tmp 名は同ディレクトリに `.notes.json.tmp-<pid>-<rand>` を使う。
+ * rename は POSIX 上では atomic、Windows でも NTFS 上は ReplaceFileW 経由で同等に扱われる。
+ */
+function saveNotesStore() {
+  const p = getNotesPath();
+  const dir = path.dirname(p);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const tmp = path.join(dir, `.notes.json.tmp-${process.pid}-${Math.random().toString(36).slice(2, 8)}`);
+    fs.writeFileSync(tmp, JSON.stringify(notesStore, null, 2), 'utf-8');
+    fs.renameSync(tmp, p);
+  } catch (e) {
+    console.error(`mdview: failed to save notes (${p}): ${e}`);
+  }
+}
+
+/**
+ * entries バリデーション。renderer から渡る任意 JSON を検証。
+ * - 配列であること
+ * - 各要素が { heading_text: string, heading_level: number (1..6), occurrence_index: number>=0, note: string, created_at?: string, updated_at?: string }
+ * 不正な要素は除外し、有効な要素のみを返す。
+ */
+function validateNotesEntries(entries) {
+  if (!Array.isArray(entries)) return [];
+  return entries.filter((e) =>
+    e !== null && typeof e === 'object'
+    && typeof e.heading_text === 'string'
+    && typeof e.heading_level === 'number' && e.heading_level >= 1 && e.heading_level <= 6
+    && typeof e.occurrence_index === 'number' && e.occurrence_index >= 0
+    && typeof e.note === 'string'
+  );
+}
+
 // ── テーマ設定 ─────────────────────────────────────────────────────────────
 
 /**
@@ -61,7 +138,7 @@ function getConfigPath() {
 function loadConfig() {
   const configPath = getConfigPath();
   if (!fs.existsSync(configPath)) {
-    return { schema_version: 1, theme: DEFAULT_THEME_ID };
+    return { schema_version: 2, theme: DEFAULT_THEME_ID, notes: { panel_open: true } };
   }
   try {
     const text = fs.readFileSync(configPath, 'utf-8');
@@ -70,10 +147,20 @@ function loadConfig() {
       console.warn(`mdview: unknown or missing theme id "${parsed.theme}", using default.`);
       parsed.theme = DEFAULT_THEME_ID;
     }
+    // schema_version v1 → v2 の後方互換: notes.panel_open がなければ追加
+    if (parsed.schema_version !== 2) {
+      parsed.schema_version = 2;
+    }
+    if (!parsed.notes || typeof parsed.notes !== 'object') {
+      parsed.notes = { panel_open: true };
+    }
+    if (typeof parsed.notes.panel_open !== 'boolean') {
+      parsed.notes.panel_open = true;
+    }
     return parsed;
   } catch (e) {
     console.warn(`mdview: failed to load config (${configPath}): ${e}. using default.`);
-    return { schema_version: 1, theme: DEFAULT_THEME_ID };
+    return { schema_version: 2, theme: DEFAULT_THEME_ID, notes: { panel_open: true } };
   }
 }
 
@@ -322,6 +409,46 @@ ipcMain.handle('dialog:openFile', async () => {
   }
 });
 
+/**
+ * renderer から受け取った filePath を「現在そのウィンドウが監視しているファイル」と照合する。
+ * 一致しない場合は null を返し、呼び出し元で空配列/エラーにフォールバックさせる。
+ * watcherStates.get(event.sender)?.watchedPath と strict equal で比較する。
+ */
+function authorizeNotesAccess(event, filePath) {
+  if (typeof filePath !== 'string' || filePath.length === 0) return null;
+  const state = watcherStates.get(event.sender);
+  if (!state || state.watchedPath !== filePath) return null;
+  return filePath;
+}
+
+ipcMain.handle('notes:get', (event, filePath) => {
+  const authed = authorizeNotesAccess(event, filePath);
+  if (!authed) return { entries: [] };
+  const bucket = notesStore.notes_by_file[authed];
+  if (!bucket || !Array.isArray(bucket.entries)) return { entries: [] };
+  return { entries: bucket.entries };
+});
+
+ipcMain.handle('notes:set', (event, payload) => {
+  if (!payload || typeof payload !== 'object') return { ok: false };
+  const authed = authorizeNotesAccess(event, payload.filePath);
+  if (!authed) return { ok: false };
+  if (!Array.isArray(payload.entries)) return { ok: false };
+  const entries = validateNotesEntries(payload.entries);
+  const now = new Date().toISOString();
+  if (entries.length === 0) {
+    // 空配列は bucket ごと削除（肥大化防止）
+    delete notesStore.notes_by_file[authed];
+  } else {
+    notesStore.notes_by_file[authed] = {
+      updated_at: now,
+      entries,
+    };
+  }
+  saveNotesStore();
+  return { ok: true };
+});
+
 ipcMain.on('reload:current', (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (!win || win.isDestroyed()) return;
@@ -350,6 +477,9 @@ app.whenReady().then(() => {
     }
     return net.fetch(pathToFileURL(resolved).toString());
   });
+
+  // notes ストアを同期読み込み（最初のウィンドウ表示前に済ませる）
+  loadNotesStore();
 
   // 起動時に config を同期読み込み（ウィンドウ生成前に themeId が必要）
   const config = loadConfig();

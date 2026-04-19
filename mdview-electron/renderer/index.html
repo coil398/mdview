@@ -23,12 +23,21 @@
         <p class="placeholder">Ctrl+O またはボタンで Markdown ファイルを開いてください。</p>
       </div>
     </main>
+    <aside id="notes">
+      <div id="notes-header">
+        <span id="notes-heading-label">（見出しにスクロール）</span>
+      </div>
+      <textarea id="notes-textarea"
+                placeholder="この見出しのメモ..."
+                spellcheck="false"
+                disabled></textarea>
+    </aside>
   </div>
   <div id="statusbar">
     <span id="sb-file" class="sb-field"></span>
     <span id="sb-position" class="sb-field"></span>
     <span id="sb-toc-hint" class="sb-field"></span>
-    <span id="sb-keys" class="sb-hint">[j/k]scroll [g/G]top/end [t]TOC [r]reload [q]quit</span>
+    <span id="sb-keys" class="sb-hint">[j/k]scroll [g/G]top/end [t]TOC [n]notes [r]reload [q]quit</span>
   </div>
   <script type="module" src="renderer.js"></script>
 </body>
