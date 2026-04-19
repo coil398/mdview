@@ -1,12 +1,14 @@
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, List, ListItem, ListState};
 use ratatui::Frame;
 
 use mdview_core::TocEntry;
 
-pub fn render(frame: &mut Frame, area: Rect, toc: &[TocEntry], toc_sel: usize) {
+use crate::theme::TuiTheme;
+
+pub fn render(frame: &mut Frame, area: Rect, toc: &[TocEntry], toc_sel: usize, theme: &TuiTheme) {
     let block = Block::bordered().title(Line::from(" ≡ Contents "));
 
     let items: Vec<ListItem> = toc
@@ -23,9 +25,11 @@ pub fn render(frame: &mut Frame, area: Rect, toc: &[TocEntry], toc_sel: usize) {
         })
         .collect();
 
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(Style::default().bg(Color::Cyan).fg(Color::Black));
+    let list = List::new(items).block(block).highlight_style(
+        Style::default()
+            .bg(theme.toc_highlight_bg)
+            .fg(theme.toc_highlight_fg),
+    );
 
     let mut state = ListState::default();
     if !toc.is_empty() {

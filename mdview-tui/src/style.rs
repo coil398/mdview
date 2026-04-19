@@ -5,10 +5,11 @@
 //! TOC ジャンプはこのマップを参照して `scroll = block_starts[entry.block_index]` で行う。
 
 use mdview_core::{Block, Cell, Document, ListItem, Span, SpanKind, TocEntry};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use unicode_width::UnicodeWidthStr;
 
 use crate::highlighter::Highlighter;
+use crate::theme::TuiTheme;
 use crate::types::{StyledLine, StyledSpan};
 
 // テーブル描画パラメータ（各列のコンテンツ最大幅を min/max でクランプ）
@@ -25,29 +26,29 @@ pub struct StyledOutput {
 
 /// Span 単体 → ratatui Style への変換。
 /// 見出し色などの「コンテキスト依存スタイル」はここでは扱わず、別途付与する。
-pub fn span_kind_to_style(kind: &SpanKind) -> Style {
+pub fn span_kind_to_style(kind: &SpanKind, theme: &TuiTheme) -> Style {
     match kind {
         SpanKind::Bold => Style::default().add_modifier(Modifier::BOLD),
         SpanKind::Italic => Style::default().add_modifier(Modifier::ITALIC),
         SpanKind::BoldItalic => Style::default().add_modifier(Modifier::BOLD | Modifier::ITALIC),
-        SpanKind::CodeInline => Style::default().fg(Color::Yellow),
+        SpanKind::CodeInline => Style::default().fg(theme.code_inline),
         SpanKind::Link { .. } => Style::default()
-            .fg(Color::Cyan)
+            .fg(theme.link)
             .add_modifier(Modifier::UNDERLINED),
         SpanKind::Normal => Style::default(),
     }
 }
 
 /// Heading レベルに応じた見出しスタイル（行プレフィックスとテキスト両方に適用）。
-fn heading_style(level: u8) -> Style {
+fn heading_style(level: u8, theme: &TuiTheme) -> Style {
     match level {
         1 => Style::default()
-            .fg(Color::Cyan)
+            .fg(theme.heading1)
             .add_modifier(Modifier::BOLD),
         2 => Style::default()
-            .fg(Color::Blue)
+            .fg(theme.heading2)
             .add_modifier(Modifier::BOLD),
-        _ => Style::default().fg(Color::Green),
+        _ => Style::default().fg(theme.heading3_plus),
     }
 }
 
@@ -59,7 +60,7 @@ fn heading_prefix(level: u8) -> &'static str {
     }
 }
 
-pub fn convert_document(doc: &Document, hl: &Highlighter) -> StyledOutput {
+pub fn convert_document(doc: &Document, hl: &Highlighter, theme: &TuiTheme) -> StyledOutput {
     let mut ctx = RenderCtx::new();
     let mut block_starts = Vec::with_capacity(doc.blocks.len());
     for (idx, block) in doc.blocks.iter().enumerate() {
@@ -68,7 +69,7 @@ pub fn convert_document(doc: &Document, hl: &Highlighter) -> StyledOutput {
             ctx.lines.push(Vec::new());
         }
         block_starts.push(ctx.lines.len());
-        render_block(block, &mut ctx, hl, 0, 0);
+        render_block(block, &mut ctx, hl, theme, 0, 0);
     }
     StyledOutput {
         lines: ctx.lines,
@@ -95,61 +96,69 @@ fn render_block(
     block: &Block,
     ctx: &mut RenderCtx,
     hl: &Highlighter,
+    theme: &TuiTheme,
     indent: usize,
     quote_depth: usize,
 ) {
     match block {
-        Block::Paragraph { lines } => render_paragraph(lines, ctx, indent, quote_depth),
-        Block::Heading { level, spans } => render_heading(*level, spans, ctx, quote_depth),
+        Block::Paragraph { lines } => render_paragraph(lines, ctx, theme, indent, quote_depth),
+        Block::Heading { level, spans } => render_heading(*level, spans, ctx, theme, quote_depth),
         Block::List {
             ordered,
             start,
             items,
-        } => render_list(*ordered, *start, items, ctx, hl, indent, quote_depth),
+        } => render_list(*ordered, *start, items, ctx, hl, theme, indent, quote_depth),
         Block::BlockQuote { blocks } => {
             for (i, b) in blocks.iter().enumerate() {
                 if i > 0 && !ctx.lines.last().map(|l| l.is_empty()).unwrap_or(false) {
                     push_empty_line(ctx, indent, quote_depth + 1);
                 }
-                render_block(b, ctx, hl, indent, quote_depth + 1);
+                render_block(b, ctx, hl, theme, indent, quote_depth + 1);
             }
         }
         Block::CodeBlock { lang, code } => {
-            render_code_block(lang, code, ctx, hl, indent, quote_depth)
+            render_code_block(lang, code, ctx, hl, theme, indent, quote_depth)
         }
         Block::Table {
             header,
             rows,
             align: _,
-        } => render_table(header, rows, ctx, indent, quote_depth),
-        Block::Rule => render_rule(ctx, indent, quote_depth),
+        } => render_table(header, rows, ctx, theme, indent, quote_depth),
+        Block::Rule => render_rule(ctx, theme, indent, quote_depth),
     }
 }
 
 fn render_paragraph(
     para_lines: &[Vec<Span>],
     ctx: &mut RenderCtx,
+    theme: &TuiTheme,
     indent: usize,
     quote_depth: usize,
 ) {
     for line_spans in para_lines {
         let mut line: StyledLine = Vec::new();
         push_indent(&mut line, indent);
-        push_quote_prefix(&mut line, quote_depth);
+        push_quote_prefix(&mut line, theme, quote_depth);
         for span in line_spans {
             line.push(StyledSpan {
                 text: span.text.clone(),
-                style: span_kind_to_style(&span.kind),
+                style: span_kind_to_style(&span.kind, theme),
             });
         }
         ctx.lines.push(line);
     }
 }
 
-fn render_heading(level: u8, spans: &[Span], ctx: &mut RenderCtx, quote_depth: usize) {
+fn render_heading(
+    level: u8,
+    spans: &[Span],
+    ctx: &mut RenderCtx,
+    theme: &TuiTheme,
+    quote_depth: usize,
+) {
     let mut line: StyledLine = Vec::new();
-    push_quote_prefix(&mut line, quote_depth);
-    let style = heading_style(level);
+    push_quote_prefix(&mut line, theme, quote_depth);
+    let style = heading_style(level, theme);
     line.push(StyledSpan {
         text: heading_prefix(level).to_string(),
         style,
@@ -159,7 +168,7 @@ fn render_heading(level: u8, spans: &[Span], ctx: &mut RenderCtx, quote_depth: u
         // ただしリンクは特別扱い: 見出し色 + UNDERLINED で表現（URL は表示しない）
         let span_style = match &span.kind {
             SpanKind::Link { .. } => style.add_modifier(Modifier::UNDERLINED),
-            SpanKind::CodeInline => style.fg(Color::Yellow),
+            SpanKind::CodeInline => style.fg(theme.code_inline),
             SpanKind::Bold => style.add_modifier(Modifier::BOLD),
             SpanKind::Italic => style.add_modifier(Modifier::ITALIC),
             SpanKind::BoldItalic => style.add_modifier(Modifier::BOLD | Modifier::ITALIC),
@@ -173,16 +182,18 @@ fn render_heading(level: u8, spans: &[Span], ctx: &mut RenderCtx, quote_depth: u
     ctx.lines.push(line);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_list(
     ordered: bool,
     start: Option<u64>,
     items: &[ListItem],
     ctx: &mut RenderCtx,
     hl: &Highlighter,
+    theme: &TuiTheme,
     indent: usize,
     quote_depth: usize,
 ) {
-    let bullet_style = Style::default().fg(Color::Yellow);
+    let bullet_style = Style::default().fg(theme.list_bullet);
     let mut counter = start.unwrap_or(1);
     for (i, item) in items.iter().enumerate() {
         // 項目間の見やすさのため、複数ブロックを含む item の前後では空行を入れる
@@ -199,7 +210,7 @@ fn render_list(
             if j > 0 && !ctx.lines.last().map(|l| l.is_empty()).unwrap_or(false) {
                 push_empty_line(ctx, indent + 1, quote_depth);
             }
-            render_block(b, ctx, hl, indent + 1, quote_depth);
+            render_block(b, ctx, hl, theme, indent + 1, quote_depth);
         }
         // バレットを最初の行の indent 直後に挿入
         if line_idx_before < ctx.lines.len() {
@@ -247,12 +258,13 @@ fn render_code_block(
     code: &str,
     ctx: &mut RenderCtx,
     hl: &Highlighter,
+    theme: &TuiTheme,
     indent: usize,
     quote_depth: usize,
 ) {
     let badge_style = Style::default()
-        .fg(Color::Black)
-        .bg(Color::Green)
+        .fg(theme.code_badge_fg)
+        .bg(theme.code_badge_bg)
         .add_modifier(Modifier::BOLD);
     let lang_display = lang.as_deref().unwrap_or("");
     let badge_text = if lang_display.is_empty() {
@@ -262,7 +274,7 @@ fn render_code_block(
     };
     let mut badge_line: StyledLine = Vec::new();
     push_indent(&mut badge_line, indent);
-    push_quote_prefix(&mut badge_line, quote_depth);
+    push_quote_prefix(&mut badge_line, theme, quote_depth);
     badge_line.push(StyledSpan {
         text: badge_text,
         style: badge_style,
@@ -273,7 +285,7 @@ fn render_code_block(
     for hl_line in highlighted {
         let mut line: StyledLine = Vec::new();
         push_indent(&mut line, indent);
-        push_quote_prefix(&mut line, quote_depth);
+        push_quote_prefix(&mut line, theme, quote_depth);
         // コード本体の前にインデント 2 文字分
         line.push(StyledSpan {
             text: "  ".to_string(),
@@ -288,6 +300,7 @@ fn render_table(
     header: &[Cell],
     rows: &[Vec<Cell>],
     ctx: &mut RenderCtx,
+    theme: &TuiTheme,
     indent: usize,
     quote_depth: usize,
 ) {
@@ -308,12 +321,12 @@ fn render_table(
         .join("─┼─");
 
     let header_style = Style::default().add_modifier(Modifier::BOLD);
-    let border_style = Style::default().fg(Color::DarkGray);
+    let border_style = Style::default().fg(theme.table_border);
 
     // ヘッダ行
     let mut header_line: StyledLine = Vec::new();
     push_indent(&mut header_line, indent);
-    push_quote_prefix(&mut header_line, quote_depth);
+    push_quote_prefix(&mut header_line, theme, quote_depth);
     header_line.push(StyledSpan {
         text: header_text.join(" │ "),
         style: header_style,
@@ -323,7 +336,7 @@ fn render_table(
     // 区切り
     let mut sep_line: StyledLine = Vec::new();
     push_indent(&mut sep_line, indent);
-    push_quote_prefix(&mut sep_line, quote_depth);
+    push_quote_prefix(&mut sep_line, theme, quote_depth);
     sep_line.push(StyledSpan {
         text: separator.clone(),
         style: border_style,
@@ -340,7 +353,7 @@ fn render_table(
             .collect();
         let mut line: StyledLine = Vec::new();
         push_indent(&mut line, indent);
-        push_quote_prefix(&mut line, quote_depth);
+        push_quote_prefix(&mut line, theme, quote_depth);
         line.push(StyledSpan {
             text: row_text.join(" │ "),
             style: Style::default(),
@@ -413,13 +426,13 @@ fn compute_table_col_widths(header: &[Cell], rows: &[Vec<Cell>]) -> Vec<usize> {
     widths
 }
 
-fn render_rule(ctx: &mut RenderCtx, indent: usize, quote_depth: usize) {
+fn render_rule(ctx: &mut RenderCtx, theme: &TuiTheme, indent: usize, quote_depth: usize) {
     let mut line: StyledLine = Vec::new();
     push_indent(&mut line, indent);
-    push_quote_prefix(&mut line, quote_depth);
+    push_quote_prefix(&mut line, theme, quote_depth);
     line.push(StyledSpan {
         text: "─".repeat(60),
-        style: Style::default().fg(Color::DarkGray),
+        style: Style::default().fg(theme.rule),
     });
     ctx.lines.push(line);
 }
@@ -437,12 +450,12 @@ fn push_indent(line: &mut StyledLine, indent: usize) {
     }
 }
 
-fn push_quote_prefix(line: &mut StyledLine, quote_depth: usize) {
+fn push_quote_prefix(line: &mut StyledLine, theme: &TuiTheme, quote_depth: usize) {
     if quote_depth > 0 {
         line.push(StyledSpan {
             text: "│ ".repeat(quote_depth),
             style: Style::default()
-                .fg(Color::DarkGray)
+                .fg(theme.quote_prefix)
                 .add_modifier(Modifier::ITALIC),
         });
     }
@@ -465,7 +478,8 @@ mod tests {
     fn render(md: &str) -> StyledOutput {
         let doc = parse_markdown(md);
         let hl = Highlighter::new();
-        convert_document(&doc, &hl)
+        let theme = TuiTheme::default();
+        convert_document(&doc, &hl, &theme)
     }
 
     fn line_to_plain(line: &StyledLine) -> String {

@@ -5,17 +5,17 @@
 }
 
 :root {
-  --bg: #1e1e2e;
-  --bg-alt: #181825;
-  --bg-surface: #313244;
-  --border: #45475a;
-  --text: #cdd6f4;
-  --text-muted: #a6adc8;
-  --blue: #89b4fa;
-  --cyan: #89dceb;
-  --green: #a6e3a1;
-  --mauve: #cba6f7;
-  --red: #f38ba8;
+  --bg: #1e1e1e;
+  --bg-alt: #252526;
+  --bg-surface: #3c3c3c;
+  --border: #474747;
+  --text: #d4d4d4;
+  --text-muted: #858585;
+  --blue: #569cd6;
+  --cyan: #4ec9b0;
+  --green: #6a9955;
+  --mauve: #ce9178;
+  --red: #f44747;
 }
 
 html, body {
@@ -58,7 +58,7 @@ html, body {
 
 #app {
   display: flex;
-  height: calc(100vh - 40px);
+  height: calc(100vh - 40px - 24px);
   overflow: hidden;
 }
 
@@ -252,6 +252,25 @@ tbody tr:nth-child(even) td {
   background: var(--bg-alt);
 }
 
+/* TOC トグル */
+#toc.toc-hidden {
+  display: none;
+}
+
+#toc-nav li.toc-item-active > a {
+  background: var(--bg-surface);
+  color: var(--text);
+}
+
+/* フォーカスペインのハイライト（左に細い縦線） */
+#toc.pane-focused {
+  box-shadow: inset 2px 0 0 var(--blue);
+}
+
+main#content.pane-focused {
+  box-shadow: inset 2px 0 0 var(--blue);
+}
+
 /* スクロールバー */
 ::-webkit-scrollbar {
   width: 8px;
@@ -269,4 +288,35 @@ tbody tr:nth-child(even) td {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--bg-surface);
+}
+
+/* ステータスバー（TUI statusbar.rs 相当） */
+#statusbar {
+  height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 12px;
+  background: var(--blue);
+  color: var(--bg);
+  font-size: 12px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+#statusbar .sb-field {
+  flex-shrink: 0;
+}
+
+#statusbar .sb-hint {
+  margin-left: auto;
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#statusbar.sb-error {
+  background: var(--red);
 }

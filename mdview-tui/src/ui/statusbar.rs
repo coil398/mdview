@@ -1,10 +1,13 @@
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use std::path::Path;
 
+use crate::theme::TuiTheme;
+
+#[allow(clippy::too_many_arguments)]
 pub fn render(
     frame: &mut Frame,
     area: Rect,
@@ -13,9 +16,10 @@ pub fn render(
     total: usize,
     toc_open: bool,
     status_error: Option<&str>,
+    theme: &TuiTheme,
 ) {
     let (status, bg) = if let Some(msg) = status_error {
-        (format!(" [ERROR] {}", msg), Color::Red)
+        (format!(" [ERROR] {}", msg), theme.statusbar_error_bg)
     } else {
         let filename = filepath.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let pct = if total > 1 {
@@ -33,14 +37,14 @@ pub fn render(
                 pct,
                 toc_hint
             ),
-            Color::Blue,
+            theme.statusbar_bg,
         )
     };
 
     let paragraph = Paragraph::new(Line::from(status)).style(
         Style::default()
             .bg(bg)
-            .fg(Color::White)
+            .fg(theme.statusbar_fg)
             .add_modifier(Modifier::BOLD),
     );
 

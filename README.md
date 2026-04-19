@@ -65,6 +65,7 @@ mdview-json <file.md>
 
 ```json
 {
+  "schema_version": 2,
   "blocks": [
     {
       "Heading": {
@@ -86,7 +87,7 @@ mdview-json <file.md>
 }
 ```
 
-> **注意**: JSON スキーマは 2026-04-18 の B-2 rewrite で破壊的に変更されている（旧 `lines` / `line_index` 形式とは非互換）。`schema_version` 導入は次フェーズで実施予定。
+> **注意**: JSON スキーマは 2026-04-18 の B-2 rewrite で破壊的に変更されている（旧 `lines` / `line_index` 形式とは非互換）。現行スキーマは `schema_version: 2`。
 
 #### Block 一覧
 
@@ -110,6 +111,49 @@ mdview-json <file.md>
 | `Link { url }` | リンク |
 
 > 旧 `Heading` / `CodeBlock` / `BlockQuote` / `ListMarker` / `Rule` は Block 側に昇格したため、`SpanKind` からは削除されている。
+
+## テーマ設定
+
+### 設定ファイル
+
+`~/.config/mdview/config.json` にテーマ ID を記述する:
+
+```json
+{
+  "schema_version": 1,
+  "theme": "github-light"
+}
+```
+
+ファイルが存在しない場合は default（`vscode-dark`）が使われる。未知のテーマ ID を書いた場合も同様に default へフォールバックし、警告が出力される。
+
+### 利用可能なテーマ ID
+
+| テーマ ID | 概要 |
+|---|---|
+| `vscode-dark` | VS Code Dark（**default**） |
+| `vscode-light` | VS Code Light |
+| `github-dark` | GitHub Dark |
+| `github-light` | GitHub Light |
+| `solarized-light` *(Phase2 予定)* | Solarized Light |
+| `solarized-dark` *(Phase2 予定)* | Solarized Dark |
+| `tokyo-night-light` *(Phase2 予定)* | Tokyo Night Light |
+| `tokyo-night-dark` *(Phase2 予定)* | Tokyo Night Dark |
+
+### TUI での指定
+
+`--theme` オプションで起動時に上書きできる（`config.json` より優先される）:
+
+```bash
+mdview --theme github-light README.md
+mdview --theme vscode-dark README.md
+```
+
+### Electron GUI での切り替え
+
+メニューバーの「**表示 → テーマ**」からテーマを選択する。選択は即時反映され、`~/.config/mdview/config.json` に永続化される。
+
+> **注意**: macOS / Windows でも `~/.config/mdview/config.json` を使う（Linux / WSL 主ターゲット設計のため）。
 
 ## 開発
 

@@ -23,4 +23,9 @@ mod wasm_api {
             }),
         }
     }
+
+    #[wasm_bindgen]
+    pub fn schema_version() -> u32 {
+        crate::types::SCHEMA_VERSION
+    }
 }

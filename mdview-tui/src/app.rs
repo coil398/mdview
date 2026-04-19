@@ -12,6 +12,7 @@ use mdview_core::TocEntry;
 
 use crate::highlighter::Highlighter;
 use crate::style::{convert_document, StyledOutput};
+use crate::theme::TuiTheme;
 use crate::types::StyledLine;
 use crate::ui::{statusbar, toc, viewer};
 use crate::watcher::FileWatcher;
@@ -32,11 +33,18 @@ pub struct App {
     pub wrapped_line_count: usize,
     /// リロードエラーメッセージと表示開始時刻。5 秒後に自動クリア。
     pub status_error: Option<(String, std::time::Instant)>,
+    /// 現在適用中のテーマ。
+    pub theme: TuiTheme,
 }
 
 impl App {
-    pub fn new(path: PathBuf) -> Result<Self> {
-        let highlighter = Arc::new(Highlighter::new());
+    pub fn new(path: PathBuf, theme: TuiTheme) -> Result<Self> {
+        let highlighter = Arc::new(
+            Highlighter::with_syntect_theme(theme.syntect_theme).unwrap_or_else(|e| {
+                eprintln!("mdview: syntect theme load failed: {}. using default.", e);
+                Highlighter::new()
+            }),
+        );
         let (tx, rx) = mpsc::channel();
         let watcher = FileWatcher::new(path.clone(), tx)?;
 
@@ -53,6 +61,7 @@ impl App {
             _watcher: watcher,
             wrapped_line_count: 0,
             status_error: None,
+            theme,
         };
 
         app.load()?;
@@ -66,7 +75,7 @@ impl App {
             lines,
             block_starts,
             toc,
-        } = convert_document(&doc, &self.highlighter);
+        } = convert_document(&doc, &self.highlighter, &self.theme);
         self.lines = lines;
         self.toc = toc;
         self.block_starts = block_starts;
@@ -238,7 +247,7 @@ impl App {
 
         // TOC描画
         if let Some(toc_area) = toc_area_opt {
-            toc::render(frame, toc_area, &self.toc, self.toc_sel);
+            toc::render(frame, toc_area, &self.toc, self.toc_sel, &self.theme);
         }
 
         // ビューア描画（wrap 後行数を返す）
@@ -253,6 +262,7 @@ impl App {
             self.lines.len().max(1),
             self.toc_open,
             self.status_error.as_ref().map(|(m, _)| m.as_str()),
+            &self.theme,
         );
 
         wrapped_line_count

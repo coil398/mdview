@@ -3,8 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none';" />
   <title>mdview</title>
   <link rel="stylesheet" href="style.css" />
+  <link id="hljs-theme" rel="stylesheet" href="vendor/themes/hljs/vs2015.css" />
 </head>
 <body>
   <div id="toolbar">
@@ -21,6 +23,12 @@
         <p class="placeholder">Ctrl+O またはボタンで Markdown ファイルを開いてください。</p>
       </div>
     </main>
+  </div>
+  <div id="statusbar">
+    <span id="sb-file" class="sb-field"></span>
+    <span id="sb-position" class="sb-field"></span>
+    <span id="sb-toc-hint" class="sb-field"></span>
+    <span id="sb-keys" class="sb-hint">[j/k]scroll [g/G]top/end [t]TOC [r]reload [q]quit</span>
   </div>
   <script type="module" src="renderer.js"></script>
 </body>

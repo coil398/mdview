@@ -1,3 +1,4 @@
+use anyhow::Result;
 use ratatui::style::{Color, Modifier, Style};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style as SyntectStyle, ThemeSet};
@@ -19,11 +20,26 @@ impl Default for Highlighter {
 }
 
 impl Highlighter {
+    /// デフォルトの syntect テーマ（`base16-ocean.dark`）でハイライターを作成する。
     pub fn new() -> Self {
         let syntax_set = SyntaxSet::load_defaults_newlines();
         let theme_set = ThemeSet::load_defaults();
         let theme = theme_set.themes["base16-ocean.dark"].clone();
         Self { syntax_set, theme }
+    }
+
+    /// 指定した syntect テーマ名でハイライターを作成する。
+    /// 不明なテーマ名の場合は `anyhow::bail!`。
+    /// 呼び出し側で catch して `Highlighter::new()` にフォールバックすること。
+    pub fn with_syntect_theme(name: &str) -> Result<Self> {
+        let syntax_set = SyntaxSet::load_defaults_newlines();
+        let theme_set = ThemeSet::load_defaults();
+        let theme = theme_set
+            .themes
+            .get(name)
+            .ok_or_else(|| anyhow::anyhow!("syntect theme {:?} not found", name))?
+            .clone();
+        Ok(Self { syntax_set, theme })
     }
 
     pub fn highlight_code(&self, code: &str, lang: &str) -> Vec<StyledLine> {
