@@ -112,6 +112,23 @@ mdview-json <file.md>
 
 > 旧 `Heading` / `CodeBlock` / `BlockQuote` / `ListMarker` / `Rule` は Block 側に昇格したため、`SpanKind` からは削除されている。
 
+## Mermaid ダイアグラム（Electron のみ）
+
+Electron 版では `mermaid` コードブロックを [mermaid](https://mermaid.js.org/) で SVG レンダリングする。対応ダイアグラム: flowchart / sequence / class / state / ER / gantt / pie / Mindmap / Architecture ほか mermaid v11 がサポートする全種別。
+
+使用例:
+
+````markdown
+```mermaid
+flowchart LR
+  A --> B
+```
+````
+
+- テーマ切替: 既存の 4 テーマに連動し、dark 系では mermaid の `dark` / light 系では `default` / `base` を適用する
+- セキュリティ: `securityLevel: 'strict'` で初期化し、ダイアグラム内の HTML タグはエンコード、click 機能は無効化される
+- TUI / `mdview-json` は mermaid レンダリングの対象外（通常のコードブロックとして表示される）
+
 ## テーマ設定
 
 ### 設定ファイル

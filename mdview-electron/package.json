@@ -7,11 +7,13 @@
     "start": "electron .",
     "copy:hljs": "mkdir -p renderer/vendor && cp node_modules/@highlightjs/cdn-assets/es/highlight.min.js renderer/vendor/highlight.min.js",
     "copy:themes": "mkdir -p renderer/vendor/themes/hljs && cp node_modules/@highlightjs/cdn-assets/styles/vs.css node_modules/@highlightjs/cdn-assets/styles/vs2015.css node_modules/@highlightjs/cdn-assets/styles/github.css node_modules/@highlightjs/cdn-assets/styles/github-dark.css renderer/vendor/themes/hljs/",
+    "copy:mermaid": "mkdir -p renderer/vendor && cp node_modules/mermaid/dist/mermaid.esm.min.mjs renderer/vendor/mermaid.esm.min.mjs",
     "build:wasm": "wasm-pack build ../mdview-core --target web --features wasm && mkdir -p wasm && cp ../mdview-core/pkg/mdview_core_bg.wasm ../mdview-core/pkg/mdview_core_bg.wasm.d.ts ../mdview-core/pkg/mdview_core.js ../mdview-core/pkg/mdview_core.d.ts ../mdview-core/pkg/package.json wasm/",
-    "dev": "npm run copy:hljs && npm run copy:themes && npm run build:wasm && electron ."
+    "dev": "npm run copy:hljs && npm run copy:themes && npm run copy:mermaid && npm run build:wasm && electron ."
   },
   "dependencies": {
     "@highlightjs/cdn-assets": "^11.11.1",
-    "electron": "^34.0.0"
+    "electron": "^34.0.0",
+    "mermaid": "11.14.0"
   }
 }

@@ -252,6 +252,20 @@ tbody tr:nth-child(even) td {
   background: var(--bg-alt);
 }
 
+/* mermaid コンテナ */
+.mermaid-container {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 1em 0;
+  text-align: center;
+}
+
+.mermaid-container svg {
+  max-width: 100%;
+  height: auto;
+}
+
 /* TOC トグル */
 #toc.toc-hidden {
   display: none;

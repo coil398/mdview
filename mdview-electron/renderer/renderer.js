@@ -106,6 +106,7 @@ const DEFAULT_THEME_ID = 'vscode-dark';
  */
 function applyTheme(id) {
   const theme = THEME_REGISTRY[id] || THEME_REGISTRY[DEFAULT_THEME_ID];
+  const effectiveId = THEME_REGISTRY[id] ? id : DEFAULT_THEME_ID;
   if (!THEME_REGISTRY[id]) {
     console.warn(`mdview: unknown theme id "${id}", falling back to default.`);
   }
@@ -121,6 +122,21 @@ function applyTheme(id) {
   if (hljsLink) {
     hljsLink.href = theme.hljsCss;
   }
+
+  // mermaid テーマ更新 + 再レンダリング
+  const mermaidTheme = MERMAID_THEME_MAP[effectiveId] || 'default';
+  if (mermaidTheme !== currentMermaidTheme) {
+    currentMermaidTheme = mermaidTheme;
+    if (mermaid) {
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: 'strict',
+        theme: currentMermaidTheme,
+      });
+      // fire-and-forget: テーマ切替時の失敗は warn のみ
+      reRenderAllMermaid().catch((e) => console.warn('mermaid re-render failed:', e));
+    }
+  }
 }
 
 // ── highlight.js ─────────────────────────────────────────────────────────
@@ -134,6 +150,37 @@ async function loadHighlightJs() {
   } catch (e) {
     console.warn('highlight.js load failed, code highlighting disabled:', e);
     hljs = null;
+  }
+}
+
+// ── mermaid ──────────────────────────────────────────────────────────────
+
+let mermaid = null;
+// diagram source 保持用。mermaid container 要素 → 元ソース文字列。
+// WeakMap を使う理由: renderDocument() で innerHTML 全置換されるため古い container は GC される。
+// notes 機能の headingKeyMap と同じ理由で DOM 属性に漏らさない。
+const mermaidSources = new WeakMap();
+// テーマ ID → mermaid theme 名のマッピング
+const MERMAID_THEME_MAP = {
+  'vscode-dark': 'dark',
+  'vscode-light': 'default',
+  'github-dark': 'dark',
+  'github-light': 'base',
+};
+let currentMermaidTheme = 'default'; // applyTheme から更新する
+
+async function loadMermaid() {
+  try {
+    const mod = await import('./vendor/mermaid.esm.min.mjs');
+    mermaid = mod.default;
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      theme: currentMermaidTheme,
+    });
+  } catch (e) {
+    console.warn('mermaid load failed, diagrams disabled:', e);
+    mermaid = null;
   }
 }
 
@@ -275,9 +322,15 @@ function blockToHtml(block, headingIndexBox) {
     }
     case 'CodeBlock': {
       const lang = d.lang;
-      const code = esc(d.code);
+      const code = d.code;
+      if (lang && lang.toLowerCase() === 'mermaid') {
+        // プレースホルダのみを出力。ソースは後処理で WeakMap に保持する。
+        // data-mermaid-source は esc 必須（改行・"・<> を含む mermaid syntax に対応）
+        return `<div class="mermaid-container" data-mermaid-source="${esc(code)}"></div>`;
+      }
+      const codeEsc = esc(code);
       const langClass = lang ? ` class="language-${esc(lang)}"` : '';
-      return `<pre><code${langClass}>${code}</code></pre>`;
+      return `<pre><code${langClass}>${codeEsc}</code></pre>`;
     }
     case 'Table': {
       const aligns = d.align || [];
@@ -755,6 +808,62 @@ function handleKeyDown(e) {
 
 // ── Markdown レンダリング ──────────────────────────────────────────────────
 
+/**
+ * #markdown-body 内の .mermaid-container 全件に対し mermaid.render() を呼び、
+ * 返却された SVG 文字列を innerHTML に代入する。
+ * ソースは data-mermaid-source 属性から読み取り、WeakMap に移して属性を削除する。
+ * parse エラー時は <pre><code class="language-mermaid">元ソース</code></pre> にフォールバック。
+ */
+async function renderMermaidBlocks() {
+  if (!mermaid) return;
+  const body = document.getElementById('markdown-body');
+  const containers = body.querySelectorAll('.mermaid-container');
+  // ID 衝突回避のためカウンタを使う
+  let i = 0;
+  for (const el of containers) {
+    const source = el.dataset.mermaidSource;
+    // 属性は削除してソースは WeakMap のみに保持
+    el.removeAttribute('data-mermaid-source');
+    if (typeof source !== 'string') continue;
+    mermaidSources.set(el, source);
+    const id = `mermaid-svg-${i++}`;
+    try {
+      const { svg } = await mermaid.render(id, source);
+      el.innerHTML = svg;
+    } catch (err) {
+      console.warn('mermaid render failed:', err);
+      // フォールバック: コードブロックとして表示
+      const pre = document.createElement('pre');
+      const code = document.createElement('code');
+      code.className = 'language-mermaid';
+      code.textContent = source;
+      pre.appendChild(code);
+      el.replaceWith(pre);
+    }
+  }
+}
+
+/**
+ * テーマ切替時に既存の mermaid container を全再レンダリングする。
+ * ソースは WeakMap に保持されているので data 属性に書き戻してから renderMermaidBlocks() を呼ぶ。
+ */
+async function reRenderAllMermaid() {
+  if (!mermaid) return;
+  const body = document.getElementById('markdown-body');
+  // .mermaid-container は Step 7 で innerHTML が SVG に置換されているか、
+  // フォールバック時は <pre> に replaceWith されて .mermaid-container 自体が消滅している。
+  // 前者のみを対象に、WeakMap からソースを復元して data 属性に戻し、再レンダリング。
+  const containers = body.querySelectorAll('.mermaid-container');
+  for (const el of containers) {
+    const source = mermaidSources.get(el);
+    if (typeof source === 'string') {
+      el.setAttribute('data-mermaid-source', source);
+      el.innerHTML = '';
+    }
+  }
+  await renderMermaidBlocks();
+}
+
 // Markdown をレンダリング
 async function renderMarkdown(text) {
   const jsonStr = parse_markdown_to_json(text);
@@ -788,7 +897,11 @@ async function renderMarkdown(text) {
 
   buildToc(doc.toc);
 
+  // mermaid 図を先に SVG 化（parse 失敗時は <pre><code class="language-mermaid"> にフォールバックされる）
+  await renderMermaidBlocks();
+
   // highlight.js でコードブロックをハイライト
+  // （mermaid 成功ブロックは <pre><code> を含まない SVG に置換済みなのでハイライト対象外）
   if (hljs) {
     document.getElementById('markdown-body').querySelectorAll('pre code').forEach((el) => {
       hljs.highlightElement(el);
@@ -810,6 +923,9 @@ async function main() {
 
   // highlight.js 読み込み
   await loadHighlightJs();
+
+  // mermaid 読み込み（applyTheme 呼び出し前にロードし初回テーマ適用時に即座に反映）
+  await loadMermaid();
 
   // config を読み込んでテーマを適用
   let config = null;
