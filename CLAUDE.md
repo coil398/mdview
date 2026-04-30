@@ -38,6 +38,13 @@ cd mdview-electron && npm install && npm start
 
 # Electron 開発（WASM ビルドから起動）
 cd mdview-electron && npm run dev
+
+# Electron .app ビルド（macOS arm64、ad-hoc 署名込み）
+cd mdview-electron && npm run dist
+# → dist/mac-arm64/mdview.app
+
+# .app を /Applications/ にインストール（dist + cp + xattr -cr）
+cd mdview-electron && npm run dist:install
 ```
 
 バイナリ名は `mdview`（TUI）と `mdview-json`（JSON出力）。`cargo install` 後はそれぞれ直接起動可能。
@@ -133,6 +140,8 @@ mdview-electron/    # Electron GUI アプリ（WASM 経由で mdview-core を利
 - **Electron CSP**: Phase C で `style-src 'self' 'unsafe-inline'` を `style-src 'self'; style-src-attr 'unsafe-inline'` に CSP Level 3 ディレクティブ分割。外部 `<style>` 要素の injection を禁止しつつ、Table の `style="text-align:..."` 属性のみ inline 許可する最小権限設計。highlight.js 11 ESM バンドルは DOM 要素に class 名のみ付与し inline style を生成しないため `style-src 'self'` で問題なし（将来 hljs v12+ にアップデートする際は `style.` / `cssText` / `setAttribute('style')` の有無を grep で再確認すること）
 - **Electron マルチウィンドウ対応**: `main.js` の watcher / debounce 状態はシングルトン変数ではなく `WeakMap<WebContents, State>` で保持する（Phase C 導入）。`win.on('closed', ...)` 内で `win.webContents` にアクセスすると `Error: Object has been destroyed` が発生しうるため、`const wc = win.webContents` で事前にキャプチャしてから `stopWatching(wc)` を呼ぶパターンを必須とする
 - **Electron ステータスバー**: TUI の `scroll+1/total` 行番号表示は Electron では意味がない（ピクセル単位スクロール）ため Phase C で `%` 表示のみ採用。全スクロール経路（キーバインド・マウスホイール・TOC クリック・`scrollIntoView`）は `#content` の単一 `scroll` イベントリスナーで `updateStatusBar()` を呼ぶ DRY 設計
+- **Electron .app パッケージング（2026-04-30）**: `electron-builder` v26 を採用。設定は `mdview-electron/package.json` の `"build"` キーに集約（外部設定ファイルなし）。`npm run dist` → `dist/mac-arm64/mdview.app` を生成。`predist` フックで `build:assets`（hljs / themes / mermaid copy + WASM ビルド）を自動実行。`mac.identity = null` で electron-builder の署名は明示スキップし、後段で `codesign --force --deep --sign - dist/mac-arm64/mdview.app` を chained で呼んで **ad-hoc 署名**する 2 段構え（macOS 13+ では arm64 `.app` は ad-hoc でも何らかの署名が必須なため、`identity: null` のままだと「壊れている」エラーで起動できない）。`asarUnpack: ["wasm/**/*"]` で WASM を asar 外に出して `WebAssembly.instantiateStreaming` の MIME チェック問題を回避。`npm run dist:install` は `dist` の後に `rm -rf /Applications/mdview.app && cp -R ... && xattr -cr /Applications/mdview.app` まで一気にやって Spotlight 起動可能にする
+- **Electron の runtime 依存ゼロ原則**: `mdview-electron/package.json` の `dependencies` は **空**（`electron` / `mermaid` / `@highlightjs/cdn-assets` を含めて全て `devDependencies`）。理由は 2 つ: (1) electron-builder は `dependencies` セクションに `electron` があるとビルドエラーで止める仕様、(2) renderer が使う npm パッケージはビルド時に `renderer/vendor/` 配下にコピー済みなので、`.app` 同梱の `app.asar` には node_modules を含める必要がない。`build.files` でも `node_modules/**/*` を指定していないため、サイズは renderer/vendor + wasm のみ
 - **テーマ機能（Phase1: 2026-04-19）**: `~/.config/mdview/config.json` に `{"schema_version":1,"theme":"<id>"}` を書いて TUI / Electron 両方でテーマを切り替えられる。有効 ID は `vscode-dark`（default） / `vscode-light` / `github-dark` / `github-light`。未知 ID は warn + default にフォールバック。Phase2 で `solarized-*` / `tokyo-night-*` / `iceberg-*` を追加予定
 - **Electron 見出しメモ機能 MVP（2026-04-19）**: `~/.config/mdview/notes.json` に `{schema_version, buckets: {filePath: [{heading_text, heading_level, occurrence_index, body, updated_at}]}}` 形式で保存する。`config.json` の `schema_version` は v1 → v2 に bump（読み込み時のみ互換補完し、即時書き込みしない）。**アンカーキーは `WeakMap<HTMLElement, AnchorKey>` で renderer 側に保持**し DOM 属性に漏らさない（区切り文字エスケープ・GC 自動解放の利点）。DOM 生成は `renderDocument(doc)` で innerHTML 代入 → `querySelectorAll('h1..h6')` で拾い `collectHeadingMeta` と zip 対応付け。**書き込み頻度が高い `notes.json` のみ atomic write（tmp→rename、tmp 名に `process.pid + Math.random().toString(36)` を含める）を採用**し、頻度の低い `config.json` は通常 write のまま。IPC は `notes:get` / `notes:set` の 2 チャネルで、`authorizeNotesAccess(event, filePath)` で `watcherStates.get(event.sender).watchedPath` と **strict equal 比較**してから処理する。**ファイルオープン経路は 2 系統（`onFileOpened` IPC / `open-btn` クリック）あり、両方に `flushPendingNote` / `notes.get` / `currentHeadingKey=null` + `updateCurrentHeading` の同一前処理を対称に適用する**必要がある（片方だけ実装するのは NG）。**notes:set の IPC ハンドラは `authorizeNotesAccess` 直後に `Array.isArray(payload.entries)` ガードを置く**（`validateNotesEntries(undefined)` は `[]` を返すため、ガードなしで渡すとファイルの全メモが消える）。`updateCurrentHeading` は `getBoundingClientRect()` をループ内で呼ぶため `requestAnimationFrame` で 1 フレーム 1 回に throttle する。preload API は他ドメインがフラットな中 `mdview.notes.{get,set}` の 1 階層ネストを採用（将来 `list` / `delete` 追加の拡張性を根拠に合意済み）
 

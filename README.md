@@ -2,6 +2,29 @@
 
 Markdown ビューア。TUI・Electron GUI・JSON 出力など複数のフロントエンドに対応したワークスペース構成。
 
+## クイックスタート
+
+macOS arm64 想定。**Rust 1.86+ / Node.js 20+ / wasm-pack** が事前に入っている前提:
+
+```bash
+git clone https://github.com/coil398/mdview && cd mdview
+
+# TUI と JSON バイナリをインストール（~/.cargo/bin/ に入る）
+cargo install --path mdview-tui
+cargo install --path mdview-json
+
+# Electron GUI を /Applications/mdview.app に配置
+cd mdview-electron && npm install && npm run dist:install
+```
+
+これで:
+
+- ターミナルから `mdview README.md` で TUI 起動
+- 外部ツール連携用に `mdview-json README.md | jq .` で AST を JSON 出力
+- Spotlight で `mdview` と打つか Dock の `mdview.app` から GUI 起動
+
+> ℹ️ wasm-pack 未インストールなら `cargo install wasm-pack` で入れてから上の手順を実行。
+
 ## クレート構成
 
 | クレート / ディレクトリ | 役割 |
@@ -13,12 +36,45 @@ Markdown ビューア。TUI・Electron GUI・JSON 出力など複数のフロン
 
 ## インストール
 
+### TUI / JSON（Rust）
+
+ローカルクローン経由:
+
+```bash
+cargo install --path mdview-tui
+cargo install --path mdview-json
+```
+
+git 経由（任意のディレクトリから）:
+
 ```bash
 cargo install --git https://github.com/coil398/mdview mdview-tui
 cargo install --git https://github.com/coil398/mdview mdview-json
 ```
 
-Electron GUI は `cd mdview-electron && npm install && npm start` で起動する（事前に WASM ビルドが必要、下記「Electron」参照）。
+### Electron GUI（macOS arm64）
+
+`.app` をビルドして `/Applications/` に配置し、Dock / Spotlight から起動できるようにする:
+
+```bash
+cd mdview-electron
+npm install              # 初回のみ
+npm run dist:install     # /Applications/mdview.app に配置
+```
+
+ビルドのみ:
+
+```bash
+npm run dist             # dist/mac-arm64/mdview.app を生成
+```
+
+開発時の即時起動（パッケージ化なし）:
+
+```bash
+npm run dev              # WASM ビルド + electron .
+```
+
+> ℹ️ ad-hoc 署名のみ・公証なし。Gatekeeper の quarantine flag は `dist:install` 内で `xattr -cr` により除去するため、初回起動時の警告は出ない（はず）。出た場合は Finder で `.app` を右クリック → 「開く」で許可する。
 
 ## 使い方
 
@@ -44,16 +100,27 @@ mdview <file.md>
 
 ### Electron GUI
 
-```bash
-# 初回のみ: WASM をビルドして mdview-electron/wasm に配置
-wasm-pack build mdview-core --target web --features wasm
-cp mdview-core/pkg/{mdview_core_bg.wasm,mdview_core_bg.wasm.d.ts,mdview_core.js,mdview_core.d.ts,package.json} mdview-electron/wasm/
+[インストール](#electron-guimacos-arm64) を参照。`/Applications/mdview.app` を起動するか、開発時は `mdview-electron/` で `npm run dev`。
 
-# 起動
-cd mdview-electron && npm install && npm start
-```
+#### キーバインド
 
-> wasm-pack の `--out-dir` フラグは cargo 1.86+ で動作しないため、デフォルト出力 `pkg/` を手動コピーする。詳細は `CLAUDE.md` を参照。
+| キー | 動作 |
+|---|---|
+| `j` / `k` | スクロール |
+| `g` / `G` | 先頭 / 末尾 |
+| `t` | TOC トグル |
+| `n` | メモパネル トグル |
+| `h` / `l` | フォーカス移動（toc ↔ content ↔ notes） |
+| `H` / `L` | フォーカス中サイドパネルの幅をリサイズ（20px 単位） |
+| `r` | 手動リロード |
+| `Cmd+O` | ファイルを開く |
+| `Cmd+C` / `Cmd+A` | コピー / 全選択 |
+
+TOC ↔ content ↔ notes の境界はマウスでドラッグしても幅変更可能。
+
+#### 見出しごとのメモ
+
+右側のメモパネル（`n` でトグル）には、現在ビューポート最上部にある見出しに紐付くメモが表示される。スクロールすると見出しが切り替わり、対応するメモも自動で切り替わる。500ms の debounce で `~/.config/mdview/notes.json` に永続化される。
 
 ### JSON 出力（外部ツール連携）
 
@@ -183,5 +250,31 @@ mdview --theme vscode-dark README.md
 
 ## 要件
 
-- Rust 1.86+
-- Electron: Node.js、wasm-pack
+| ツール | 想定バージョン | 用途 |
+|---|---|---|
+| Rust | 1.86 以上 | TUI / JSON / WASM ビルド |
+| Node.js | 20 LTS 以上 | Electron GUI |
+| wasm-pack | 0.13 以上 | `mdview-core` の WASM ビルド（`cargo install wasm-pack`）|
+| macOS | 13 以上（arm64） | Electron `.app` ビルド |
+
+> ℹ️ Intel Mac の場合は `mdview-electron/package.json` の `"dist"` script の `--arm64` を `--x64` に書き換えて使う。
+
+## トラブルシューティング
+
+### Gatekeeper で「壊れているため開けません」と出る
+
+ad-hoc 署名のみで公証していないため、初回起動で出ることがある。`xattr` で quarantine 属性を消せば回避できる:
+
+```bash
+xattr -cr /Applications/mdview.app
+```
+
+`npm run dist:install` 経由でインストールした場合はスクリプト内で実行済みのため、通常は出ない。
+
+### WASM ビルドが失敗する
+
+`wasm-pack` が cargo 1.86+ で `--out-dir` を unstable の `--artifact-dir` にマップしてしまう。`mdview-electron/package.json` の `build:wasm` は `--out-dir` を指定せずデフォルト `pkg/` に出力する設計のため通常は問題ないが、独自にコマンドを書く場合は同じパターンに従うこと。
+
+### `cargo install --path mdview-tui` が遅い
+
+初回は `syntect` / `ratatui` などのコンパイルで数分かかる。リリースビルド（`--release` がデフォルト）なので 2 回目以降はキャッシュが効く。
