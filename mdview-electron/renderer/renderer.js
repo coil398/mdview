@@ -5,9 +5,24 @@ let hljs = null;
 let tocOpen = true;            // 初期状態: 表示
 let tocSelectedIndex = 0;      // TOC 開時の選択項目 index（Enter ジャンプ対象）
 let currentToc = [];           // 最新の doc.toc を保持（keydown ハンドラから参照）
-let focusedPane = 'content';   // 'toc' | 'content' — キー入力の移動対象ペイン
+let focusedPane = 'content';   // 'toc' | 'content' | 'notes' — キー入力の移動対象ペイン
 let currentFilePath = null;    // ステータスバー表示用（絶対パス）
 let expectedSchemaVersion = null; // WASM 初期化後に schema_version() で設定
+
+// ── パネル幅リサイズ ──────────────────────────────────────────────────────
+// 制約は main.js の対応定数と同期させること。
+const TOC_WIDTH_DEFAULT = 240;
+const TOC_WIDTH_MIN = 120;
+const TOC_WIDTH_MAX = 600;
+const NOTES_WIDTH_DEFAULT = 280;
+const NOTES_WIDTH_MIN = 160;
+const NOTES_WIDTH_MAX = 800;
+const RESIZE_STEP = 20;             // H/L キー 1 回あたりの幅変動 px
+const LAYOUT_SAVE_DEBOUNCE_MS = 300;
+
+let tocWidth = TOC_WIDTH_DEFAULT;
+let notesWidth = NOTES_WIDTH_DEFAULT;
+let layoutSaveTimer = null;
 
 // ── メモ機能の状態 ────────────────────────────────────────────────────────
 
@@ -474,12 +489,125 @@ function updateTocSelection() {
 // TOC の表示/非表示を tocOpen 状態に合わせる
 function applyTocVisibility() {
   document.getElementById('toc').classList.toggle('toc-hidden', !tocOpen);
+  applyResizeHandleVisibility();
 }
 
 // フォーカスペインの視覚ハイライトを更新
 function applyFocus() {
   document.getElementById('toc').classList.toggle('pane-focused', focusedPane === 'toc' && tocOpen);
   document.getElementById('content').classList.toggle('pane-focused', focusedPane === 'content');
+  document.getElementById('notes').classList.toggle('pane-focused', focusedPane === 'notes' && notesOpen);
+}
+
+/**
+ * 隣接ペインが閉じている場合、リサイズハンドルも非表示にする。
+ * 例: TOC が閉じていれば #resize-toc は意味がないので display:none。
+ */
+function applyResizeHandleVisibility() {
+  document.getElementById('resize-toc').classList.toggle('handle-hidden', !tocOpen);
+  document.getElementById('resize-notes').classList.toggle('handle-hidden', !notesOpen);
+}
+
+/**
+ * tocWidth / notesWidth を CSS 変数に書き戻す。
+ * TOC / notes が閉じていても値は保持する（再表示時にそのまま復元される）。
+ */
+function applyPaneWidths() {
+  const root = document.documentElement;
+  root.style.setProperty('--toc-width', `${tocWidth}px`);
+  root.style.setProperty('--notes-width', `${notesWidth}px`);
+}
+
+function clampPaneWidth(value, min, max) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+/**
+ * tocWidth / notesWidth を config.json に保存する。debounce で書き込み頻度を抑える
+ * （ドラッグ中の連続更新でも 300ms 静止後に 1 回だけ書く）。
+ */
+function scheduleLayoutSave() {
+  if (layoutSaveTimer !== null) clearTimeout(layoutSaveTimer);
+  layoutSaveTimer = setTimeout(async () => {
+    layoutSaveTimer = null;
+    try {
+      const cfg = await window.mdview.loadConfig();
+      if (!cfg.layout || typeof cfg.layout !== 'object') cfg.layout = {};
+      cfg.layout.toc_width = tocWidth;
+      cfg.layout.notes_width = notesWidth;
+      await window.mdview.saveConfig(cfg);
+    } catch (e) {
+      console.warn('mdview: failed to save layout:', e);
+    }
+  }, LAYOUT_SAVE_DEBOUNCE_MS);
+}
+
+/**
+ * pane を絶対値 value にリサイズする。範囲外は clamp。
+ * 値が変化したら CSS 変数を更新して保存をスケジュール。
+ */
+function setPaneWidth(pane, value) {
+  if (pane === 'toc') {
+    const next = clampPaneWidth(value, TOC_WIDTH_MIN, TOC_WIDTH_MAX);
+    if (next === tocWidth) return;
+    tocWidth = next;
+  } else if (pane === 'notes') {
+    const next = clampPaneWidth(value, NOTES_WIDTH_MIN, NOTES_WIDTH_MAX);
+    if (next === notesWidth) return;
+    notesWidth = next;
+  } else {
+    return;
+  }
+  applyPaneWidths();
+  scheduleLayoutSave();
+}
+
+/**
+ * pane を delta px 分広げる（負なら狭める）。
+ */
+function resizePane(pane, delta) {
+  const base = pane === 'toc' ? tocWidth : pane === 'notes' ? notesWidth : null;
+  if (base === null) return;
+  setPaneWidth(pane, base + delta);
+}
+
+/**
+ * リサイズハンドル（4px 幅の縦バー）にドラッグ用 pointer イベントを登録する。
+ * setPointerCapture でハンドルから外れてもイベントを取り続ける（標準 Web パターン）。
+ *
+ * pane === 'toc' の場合: ハンドルは TOC の右側にあるので、右ドラッグで TOC を広げる
+ *   → newWidth = startWidth + dx
+ * pane === 'notes' の場合: ハンドルは notes の左側にあるので、右ドラッグで notes を狭める
+ *   → newWidth = startWidth - dx
+ */
+function setupResizeHandle(handleId, pane) {
+  const handle = document.getElementById(handleId);
+  if (!handle) return;
+  handle.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;  // 左クリックのみ
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = pane === 'toc' ? tocWidth : notesWidth;
+    handle.classList.add('dragging');
+    try { handle.setPointerCapture(e.pointerId); } catch (_) { /* noop */ }
+
+    const onMove = (ev) => {
+      const dx = ev.clientX - startX;
+      const newWidth = pane === 'toc' ? startWidth + dx : startWidth - dx;
+      setPaneWidth(pane, newWidth);
+    };
+    const onEnd = () => {
+      handle.classList.remove('dragging');
+      try { handle.releasePointerCapture(e.pointerId); } catch (_) { /* noop */ }
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onEnd);
+      handle.removeEventListener('pointercancel', onEnd);
+    };
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onEnd);
+    handle.addEventListener('pointercancel', onEnd);
+  });
 }
 
 // ── ステータスバー ────────────────────────────────────────────────────────
@@ -653,6 +781,7 @@ function onNotesBlur() {
  */
 function applyNotesVisibility() {
   document.getElementById('notes').classList.toggle('notes-hidden', !notesOpen);
+  applyResizeHandleVisibility();
 }
 
 // ステータスバーをエラー状態に更新
@@ -721,16 +850,44 @@ function handleKeyDown(e) {
       break;
     case 'h':
     case 'ArrowLeft':
-      if (tocOpen) {
+      // 1 ペイン左へ移動: notes → content → toc
+      if (focusedPane === 'notes') {
+        focusedPane = 'content';
+      } else if (focusedPane === 'content' && tocOpen) {
         focusedPane = 'toc';
-        applyFocus();
       }
+      applyFocus();
       e.preventDefault();
       break;
     case 'l':
     case 'ArrowRight':
-      focusedPane = 'content';
+      // 1 ペイン右へ移動: toc → content → notes
+      if (focusedPane === 'toc') {
+        focusedPane = 'content';
+      } else if (focusedPane === 'content' && notesOpen) {
+        focusedPane = 'notes';
+      }
       applyFocus();
+      e.preventDefault();
+      break;
+    case 'H':
+      // 現フォーカスのサイドパネルを「左方向に動かす」
+      // toc は左端なので狭める、notes は左に動かすと広がる
+      if (focusedPane === 'toc' && tocOpen) {
+        resizePane('toc', -RESIZE_STEP);
+      } else if (focusedPane === 'notes' && notesOpen) {
+        resizePane('notes', RESIZE_STEP);
+      }
+      e.preventDefault();
+      break;
+    case 'L':
+      // 現フォーカスのサイドパネルを「右方向に動かす」
+      // toc は右に動かすと広がる、notes は右端なので狭める
+      if (focusedPane === 'toc' && tocOpen) {
+        resizePane('toc', RESIZE_STEP);
+      } else if (focusedPane === 'notes' && notesOpen) {
+        resizePane('notes', -RESIZE_STEP);
+      }
       e.preventDefault();
       break;
     case 'PageDown':
@@ -769,8 +926,13 @@ function handleKeyDown(e) {
       if (!notesOpen) {
         // 閉じる前に現在のメモを保存
         flushPendingNote();
+        // 閉じるとき notes フォーカスなら本文に戻す
+        if (focusedPane === 'notes') {
+          focusedPane = 'content';
+        }
       }
       applyNotesVisibility();
+      applyFocus();
       // config.json に即保存（既存 loadConfig + saveConfig パターン）
       window.mdview.loadConfig().then((cfg) => {
         if (!cfg.notes || typeof cfg.notes !== 'object') cfg.notes = {};
@@ -941,6 +1103,16 @@ async function main() {
   // config から notesOpen 初期値を設定
   notesOpen = config?.notes?.panel_open !== false;  // undefined / null / true → true
   applyNotesVisibility();
+
+  // config からパネル幅初期値を設定（main.js 側で clamp 済みだが念のため再 clamp）
+  if (config?.layout) {
+    tocWidth = clampPaneWidth(config.layout.toc_width, TOC_WIDTH_MIN, TOC_WIDTH_MAX);
+    notesWidth = clampPaneWidth(config.layout.notes_width, NOTES_WIDTH_MIN, NOTES_WIDTH_MAX);
+  }
+  applyPaneWidths();
+  applyResizeHandleVisibility();
+  setupResizeHandle('resize-toc', 'toc');
+  setupResizeHandle('resize-notes', 'notes');
 
   // メニュー「テーマ」変更通知を受信してテーマを切り替え
   window.mdview.onThemeChanged(({ id }) => {

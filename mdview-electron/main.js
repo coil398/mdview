@@ -117,6 +117,23 @@ const THEME_BACKGROUNDS = {
 const VALID_THEME_IDS = ['vscode-dark', 'vscode-light', 'github-dark', 'github-light'];
 const DEFAULT_THEME_ID = 'vscode-dark';
 
+// レイアウト（TOC / notes 幅）の制約。renderer.js の対応定数と同期させること。
+const TOC_WIDTH_DEFAULT = 240;
+const TOC_WIDTH_MIN = 120;
+const TOC_WIDTH_MAX = 600;
+const NOTES_WIDTH_DEFAULT = 280;
+const NOTES_WIDTH_MIN = 160;
+const NOTES_WIDTH_MAX = 800;
+
+function clampWidth(value, min, max, fallback) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function defaultLayout() {
+  return { toc_width: TOC_WIDTH_DEFAULT, notes_width: NOTES_WIDTH_DEFAULT };
+}
+
 /**
  * `$XDG_CONFIG_HOME/mdview/config.json` のパスを返す。
  * Rust 側（config.rs）と同一ロジック:
@@ -138,7 +155,12 @@ function getConfigPath() {
 function loadConfig() {
   const configPath = getConfigPath();
   if (!fs.existsSync(configPath)) {
-    return { schema_version: 2, theme: DEFAULT_THEME_ID, notes: { panel_open: true } };
+    return {
+      schema_version: 2,
+      theme: DEFAULT_THEME_ID,
+      notes: { panel_open: true },
+      layout: defaultLayout(),
+    };
   }
   try {
     const text = fs.readFileSync(configPath, 'utf-8');
@@ -157,10 +179,25 @@ function loadConfig() {
     if (typeof parsed.notes.panel_open !== 'boolean') {
       parsed.notes.panel_open = true;
     }
+    // layout フィールドは後方互換補完（schema bump なしで追加）
+    if (!parsed.layout || typeof parsed.layout !== 'object') {
+      parsed.layout = defaultLayout();
+    }
+    parsed.layout.toc_width = clampWidth(
+      parsed.layout.toc_width, TOC_WIDTH_MIN, TOC_WIDTH_MAX, TOC_WIDTH_DEFAULT,
+    );
+    parsed.layout.notes_width = clampWidth(
+      parsed.layout.notes_width, NOTES_WIDTH_MIN, NOTES_WIDTH_MAX, NOTES_WIDTH_DEFAULT,
+    );
     return parsed;
   } catch (e) {
     console.warn(`mdview: failed to load config (${configPath}): ${e}. using default.`);
-    return { schema_version: 2, theme: DEFAULT_THEME_ID, notes: { panel_open: true } };
+    return {
+      schema_version: 2,
+      theme: DEFAULT_THEME_ID,
+      notes: { panel_open: true },
+      layout: defaultLayout(),
+    };
   }
 }
 
@@ -333,6 +370,21 @@ function buildMenu(config) {
         },
         { type: 'separator' },
         { role: 'quit', label: '終了' },
+      ],
+    },
+    // 編集メニュー: コピー / ペースト / 全選択などの標準ショートカットを有効化するため必須。
+    // カスタム ApplicationMenu を設定するとデフォルトメニューが上書きされ、
+    // editMenu ロールを含めないと Cmd+C / Cmd+A 等が動かなくなる。
+    {
+      label: '編集',
+      submenu: [
+        { role: 'undo', label: '元に戻す' },
+        { role: 'redo', label: 'やり直し' },
+        { type: 'separator' },
+        { role: 'cut', label: '切り取り' },
+        { role: 'copy', label: 'コピー' },
+        { role: 'paste', label: '貼り付け' },
+        { role: 'selectAll', label: 'すべて選択' },
       ],
     },
     {

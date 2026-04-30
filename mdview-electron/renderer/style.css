@@ -16,6 +16,8 @@
   --green: #6a9955;
   --mauve: #ce9178;
   --red: #f44747;
+  --toc-width: 240px;
+  --notes-width: 280px;
 }
 
 html, body {
@@ -63,8 +65,8 @@ html, body {
 }
 
 #toc {
-  width: 240px;
-  min-width: 240px;
+  width: var(--toc-width);
+  flex-shrink: 0;
   background: var(--bg-alt);
   border-right: 1px solid var(--border);
   display: flex;
@@ -273,8 +275,8 @@ tbody tr:nth-child(even) td {
 
 /* メモパネル */
 #notes {
-  width: 280px;
-  min-width: 280px;
+  width: var(--notes-width);
+  flex-shrink: 0;
   background: var(--bg-alt);
   border-left: 1px solid var(--border);
   display: flex;
@@ -329,6 +331,29 @@ tbody tr:nth-child(even) td {
 
 main#content.pane-focused {
   box-shadow: inset 2px 0 0 var(--blue);
+}
+
+#notes.pane-focused {
+  box-shadow: inset -2px 0 0 var(--blue);
+}
+
+/* リサイズハンドル（ドラッグで TOC / notes 幅を変更） */
+.resize-handle {
+  width: 4px;
+  flex-shrink: 0;
+  background: transparent;
+  cursor: col-resize;
+  position: relative;
+  z-index: 10;
+}
+
+.resize-handle:hover,
+.resize-handle.dragging {
+  background: var(--blue);
+}
+
+.resize-handle.handle-hidden {
+  display: none;
 }
 
 /* スクロールバー */
