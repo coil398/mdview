@@ -9,7 +9,7 @@ use mdview_tui::theme::TuiTheme;
 struct Cli {
     file: PathBuf,
     /// テーマ ID を指定して起動（config.json より優先）。
-    /// 有効な値: vscode-light, vscode-dark, github-light, github-dark
+    /// 有効な値: vscode-light, vscode-dark, github-light, github-dark, solarized-light, solarized-dark
     #[arg(long, value_name = "THEME_ID")]
     theme: Option<String>,
 }

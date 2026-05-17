@@ -1,0 +1,22 @@
+/* Solarized Light for highlight.js
+ * Background: #fdf6e3 (base3) / Foreground: #586e75 (base01)
+ */
+.hljs {
+  display: block;
+  overflow-x: auto;
+  padding: 0.5em;
+  background: #fdf6e3;
+  color: #586e75;  /* base01 (5.11:1 vs #fdf6e3 — WCAG AA) */
+}
+.hljs-comment, .hljs-quote { color: #93a1a1; font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-name, .hljs-section, .hljs-doctag, .hljs-title, .hljs-type { color: #859900; }
+.hljs-string, .hljs-symbol, .hljs-bullet, .hljs-meta-string, .hljs-regexp { color: #2aa198; }
+.hljs-number, .hljs-meta { color: #d33682; }
+.hljs-built_in, .hljs-builtin-name, .hljs-class .hljs-title { color: #b58900; }
+.hljs-variable, .hljs-template-variable, .hljs-attr, .hljs-attribute { color: #cb4b16; }
+.hljs-link { color: #268bd2; text-decoration: underline; }
+.hljs-formula { background: #eee8d5; }
+.hljs-addition { color: #859900; background: #eee8d5; }
+.hljs-deletion { color: #dc322f; background: #eee8d5; }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: bold; }

@@ -110,6 +110,40 @@ const THEME_REGISTRY = {
     hljsCss: 'vendor/themes/hljs/github.css',
     background: '#ffffff',
   },
+  'solarized-dark': {
+    cssVars: {
+      '--bg': '#002b36',
+      '--bg-alt': '#073642',
+      '--bg-surface': '#094654',
+      '--border': '#586e75',
+      '--text': '#839496',
+      '--text-muted': '#657b83',
+      '--blue': '#268bd2',
+      '--cyan': '#2aa198',
+      '--green': '#859900',
+      '--mauve': '#6c71c4',
+      '--red': '#dc322f',
+    },
+    hljsCss: 'vendor/themes/hljs/solarized-dark.css',
+    background: '#002b36',
+  },
+  'solarized-light': {
+    cssVars: {
+      '--bg': '#fdf6e3',
+      '--bg-alt': '#eee8d5',
+      '--bg-surface': '#e5dfc5',
+      '--border': '#93a1a1',
+      '--text': '#657b83',
+      '--text-muted': '#839496',
+      '--blue': '#268bd2',
+      '--cyan': '#2aa198',
+      '--green': '#859900',
+      '--mauve': '#6c71c4',
+      '--red': '#dc322f',
+    },
+    hljsCss: 'vendor/themes/hljs/solarized-light.css',
+    background: '#fdf6e3',
+  },
 };
 
 const DEFAULT_THEME_ID = 'vscode-dark';

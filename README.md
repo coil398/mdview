@@ -219,10 +219,12 @@ flowchart LR
 | `vscode-light` | VS Code Light |
 | `github-dark` | GitHub Dark |
 | `github-light` | GitHub Light |
-| `solarized-light` *(Phase2 予定)* | Solarized Light |
-| `solarized-dark` *(Phase2 予定)* | Solarized Dark |
-| `tokyo-night-light` *(Phase2 予定)* | Tokyo Night Light |
-| `tokyo-night-dark` *(Phase2 予定)* | Tokyo Night Dark |
+| `solarized-light` | Solarized Light |
+| `solarized-dark` | Solarized Dark |
+| `tokyo-night-light` *(Phase3 予定)* | Tokyo Night Light |
+| `tokyo-night-dark` *(Phase3 予定)* | Tokyo Night Dark |
+| `iceberg-light` *(Phase3 予定)* | Iceberg Light |
+| `iceberg-dark` *(Phase3 予定)* | Iceberg Dark |
 
 ### TUI での指定
 

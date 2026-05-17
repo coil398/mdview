@@ -142,7 +142,7 @@ mdview-electron/    # Electron GUI アプリ（WASM 経由で mdview-core を利
 - **Electron ステータスバー**: TUI の `scroll+1/total` 行番号表示は Electron では意味がない（ピクセル単位スクロール）ため Phase C で `%` 表示のみ採用。全スクロール経路（キーバインド・マウスホイール・TOC クリック・`scrollIntoView`）は `#content` の単一 `scroll` イベントリスナーで `updateStatusBar()` を呼ぶ DRY 設計
 - **Electron .app パッケージング（2026-04-30）**: `electron-builder` v26 を採用。設定は `mdview-electron/package.json` の `"build"` キーに集約（外部設定ファイルなし）。`npm run dist` → `dist/mac-arm64/mdview.app` を生成。`predist` フックで `build:assets`（hljs / themes / mermaid copy + WASM ビルド）を自動実行。`mac.identity = null` で electron-builder の署名は明示スキップし、後段で `codesign --force --deep --sign - dist/mac-arm64/mdview.app` を chained で呼んで **ad-hoc 署名**する 2 段構え（macOS 13+ では arm64 `.app` は ad-hoc でも何らかの署名が必須なため、`identity: null` のままだと「壊れている」エラーで起動できない）。`asarUnpack: ["wasm/**/*"]` で WASM を asar 外に出して `WebAssembly.instantiateStreaming` の MIME チェック問題を回避。`npm run dist:install` は `dist` の後に `rm -rf /Applications/mdview.app && cp -R ... && xattr -cr /Applications/mdview.app` まで一気にやって Spotlight 起動可能にする
 - **Electron の runtime 依存ゼロ原則**: `mdview-electron/package.json` の `dependencies` は **空**（`electron` / `mermaid` / `@highlightjs/cdn-assets` を含めて全て `devDependencies`）。理由は 2 つ: (1) electron-builder は `dependencies` セクションに `electron` があるとビルドエラーで止める仕様、(2) renderer が使う npm パッケージはビルド時に `renderer/vendor/` 配下にコピー済みなので、`.app` 同梱の `app.asar` には node_modules を含める必要がない。`build.files` でも `node_modules/**/*` を指定していないため、サイズは renderer/vendor + wasm のみ
-- **テーマ機能（Phase1: 2026-04-19）**: `~/.config/mdview/config.json` に `{"schema_version":1,"theme":"<id>"}` を書いて TUI / Electron 両方でテーマを切り替えられる。有効 ID は `vscode-dark`（default） / `vscode-light` / `github-dark` / `github-light`。未知 ID は warn + default にフォールバック。Phase2 で `solarized-*` / `tokyo-night-*` / `iceberg-*` を追加予定
+- **テーマ機能（Phase1: 2026-04-19 / Phase2: 2026-05-17）**: `~/.config/mdview/config.json` に `{"schema_version":1,"theme":"<id>"}` を書いて TUI / Electron 両方でテーマを切り替えられる。有効 ID は `vscode-dark`（default） / `vscode-light` / `github-dark` / `github-light` / `solarized-dark` / `solarized-light`。未知 ID は warn + default にフォールバック。Phase3 で `tokyo-night-*` / `iceberg-*` を追加予定
 - **Electron 見出しメモ機能 MVP（2026-04-19）**: `~/.config/mdview/notes.json` に `{schema_version, buckets: {filePath: [{heading_text, heading_level, occurrence_index, body, updated_at}]}}` 形式で保存する。`config.json` の `schema_version` は v1 → v2 に bump（読み込み時のみ互換補完し、即時書き込みしない）。**アンカーキーは `WeakMap<HTMLElement, AnchorKey>` で renderer 側に保持**し DOM 属性に漏らさない（区切り文字エスケープ・GC 自動解放の利点）。DOM 生成は `renderDocument(doc)` で innerHTML 代入 → `querySelectorAll('h1..h6')` で拾い `collectHeadingMeta` と zip 対応付け。**書き込み頻度が高い `notes.json` のみ atomic write（tmp→rename、tmp 名に `process.pid + Math.random().toString(36)` を含める）を採用**し、頻度の低い `config.json` は通常 write のまま。IPC は `notes:get` / `notes:set` の 2 チャネルで、`authorizeNotesAccess(event, filePath)` で `watcherStates.get(event.sender).watchedPath` と **strict equal 比較**してから処理する。**ファイルオープン経路は 2 系統（`onFileOpened` IPC / `open-btn` クリック）あり、両方に `flushPendingNote` / `notes.get` / `currentHeadingKey=null` + `updateCurrentHeading` の同一前処理を対称に適用する**必要がある（片方だけ実装するのは NG）。**notes:set の IPC ハンドラは `authorizeNotesAccess` 直後に `Array.isArray(payload.entries)` ガードを置く**（`validateNotesEntries(undefined)` は `[]` を返すため、ガードなしで渡すとファイルの全メモが消える）。`updateCurrentHeading` は `getBoundingClientRect()` をループ内で呼ぶため `requestAnimationFrame` で 1 フレーム 1 回に throttle する。preload API は他ドメインがフラットな中 `mdview.notes.{get,set}` の 1 階層ネストを採用（将来 `list` / `delete` 追加の拡張性を根拠に合意済み）
 
 ### テーマ機能メンテナンスガイド
@@ -152,8 +152,13 @@ mdview-electron/    # Electron GUI アプリ（WASM 経由で mdview-core を利
 1. **`mdview-tui/src/theme.rs`**: `TuiTheme::from_id` の `match` 分岐に `"new-theme-id" => Self::new_theme()` を追加し、`new_theme()` コンストラクタを実装する。`syntect_theme` フィールドには `ThemeSet::load_defaults()` の実測キー名を使うこと（下記確認方法を参照）
 2. **`mdview-electron/renderer/renderer.js`**: `THEME_REGISTRY` に `'new-theme-id': { cssVars: {...}, hljsCss: 'vendor/themes/hljs/xxx.css', background: '#...' }` を追加する
 3. **`mdview-electron/main.js`**: `THEME_BACKGROUNDS` と `VALID_THEME_IDS` に追加し、テーマメニューの `themeSubmenu` に radio 項目を追加する
-4. **`mdview-electron/package.json`**: `copy:themes` スクリプトに対応する hljs CSS ファイル名を追加する
+4. **`mdview-electron/package.json`**: `copy:themes` スクリプトに対応する hljs CSS ファイル名を追加する（ただし公式 CDN 未収録テーマは自前 CSS を `git add -f` で直接 commit し `copy:themes` には含めない。詳細は下記「自前カスタム hljs CSS の追加手順」参照）
 5. **`README.md`**: テーマ一覧の表を更新する
+6. **WCAG AA コントラスト比確認**: 以下の 3 ペアがいずれも 4.5:1 以上を達成していることを確認する。
+   - `statusbar_fg` vs `statusbar_bg`
+   - `toc_highlight_fg` vs `toc_highlight_bg`
+   - `code_badge_fg` vs `code_badge_bg`
+   各ペアの比率は WCAG 公式計算式（相対輝度の比）または信頼できるコントラストチェッカーで算出する。Phase F-2 では `solarized_light()` の 3 フィールドが初期実装で AA 未達（blue accent `#268bd2` → base01 `#586e75` への修正が必要）。
 
 #### syntect テーマ名の確認方法
 
@@ -165,17 +170,19 @@ keys.sort();
 for k in &keys { println!("THEME_KEY: {}", k); }
 ```
 
-Phase1 時点の実測値（全 7 件）:
+Phase1/2 時点の実測値（全 7 件）:
 - `InspiredGitHub`
 - `Solarized (dark)` / `Solarized (light)`
 - `base16-eighties.dark` / `base16-mocha.dark`
 - `base16-ocean.dark` / `base16-ocean.light`
 
-Phase1 ID → syntect テーマ名マッピング:
+Phase1/2 ID → syntect テーマ名マッピング:
 - `vscode-dark` → `base16-ocean.dark`
 - `vscode-light` → `base16-ocean.light`
 - `github-dark` → `base16-eighties.dark`（近似）
 - `github-light` → `InspiredGitHub`
+- `solarized-dark` → `Solarized (dark)`（Phase2 追加）
+- `solarized-light` → `Solarized (light)`（Phase2 追加）
 
 #### hljs CSS ファイル名の確認方法
 
@@ -183,6 +190,16 @@ Phase1 ID → syntect テーマ名マッピング:
 ls mdview-electron/node_modules/@highlightjs/cdn-assets/styles/ | grep -iE "vs|github|solarized|tokyo"
 ```
 
-Phase1 で採用した 4 ファイル（実在確認済み）:
+Phase1/2 で採用した 6 ファイル（実在確認済み）:
 - `vs.css`（VS Code Light）/ `vs2015.css`（VS Code Dark）
 - `github.css`（GitHub Light）/ `github-dark.css`（GitHub Dark）
+- `solarized-light.css`（Solarized Light, **自前カスタム**）（Phase2 追加）
+- `solarized-dark.css`（Solarized Dark, **自前カスタム**）（Phase2 追加）
+
+#### 自前カスタム hljs CSS の追加手順（公式未収録テーマ用）
+
+highlight.js 公式 CDN に収録されていないテーマ（Solarized / Tokyo Night / Iceberg 等）を追加する場合、`mdview-electron/renderer/vendor/themes/hljs/<theme-id>.css` を手書きで `git add -f` して commit する。
+
+必須セレクタは hljs 11.x 標準クラス（`.hljs`, `.hljs-comment`, `.hljs-keyword`, `.hljs-string`, `.hljs-number`, `.hljs-built_in`, `.hljs-variable`, `.hljs-link`, `.hljs-formula`, `.hljs-addition`, `.hljs-deletion`, `.hljs-emphasis`, `.hljs-strong`）の `color` / `background` 指定のみで十分。既存 `solarized-{dark,light}.css` を雛形にする。
+
+`package.json` の `copy:themes` には含めない（自前ファイルは `node_modules` 由来ではないため）。`.gitignore` が `mdview-electron/renderer/vendor/` 全体を除外しているため、`git add -f` で強制追加が必要。

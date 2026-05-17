@@ -112,9 +112,11 @@ const THEME_BACKGROUNDS = {
   'vscode-light': '#ffffff',
   'github-dark': '#0d1117',
   'github-light': '#ffffff',
+  'solarized-dark': '#002b36',
+  'solarized-light': '#fdf6e3',
 };
 
-const VALID_THEME_IDS = ['vscode-dark', 'vscode-light', 'github-dark', 'github-light'];
+const VALID_THEME_IDS = ['vscode-dark', 'vscode-light', 'github-dark', 'github-light', 'solarized-dark', 'solarized-light'];
 const DEFAULT_THEME_ID = 'vscode-dark';
 
 // レイアウト（TOC / notes 幅）の制約。renderer.js の対応定数と同期させること。
@@ -338,6 +340,18 @@ function buildMenu(config) {
       type: 'radio',
       checked: currentThemeId === 'github-dark',
       click: () => applyThemeFromMenu('github-dark'),
+    },
+    {
+      label: 'Solarized Light',
+      type: 'radio',
+      checked: currentThemeId === 'solarized-light',
+      click: () => applyThemeFromMenu('solarized-light'),
+    },
+    {
+      label: 'Solarized Dark',
+      type: 'radio',
+      checked: currentThemeId === 'solarized-dark',
+      click: () => applyThemeFromMenu('solarized-dark'),
     },
   ];
 

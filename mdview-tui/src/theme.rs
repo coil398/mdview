@@ -166,6 +166,71 @@ impl TuiTheme {
         }
     }
 
+    /// Solarized Dark テーマ。
+    /// syntect: "Solarized (dark)"（syntect 5.3.0 default-themes に同梱、空白・括弧含む）。
+    /// 公式パレット: https://ethanschoonover.com/solarized/
+    pub fn solarized_dark() -> Self {
+        Self {
+            id: "solarized-dark",
+            syntect_theme: "Solarized (dark)",
+
+            // 公式 Solarized パレットからの選定
+            heading1: Color::Rgb(38, 139, 210), // #268bd2 blue
+            heading2: Color::Rgb(42, 161, 152), // #2aa198 cyan
+            heading3_plus: Color::Rgb(108, 113, 196), // #6c71c4 violet
+
+            code_inline: Color::Rgb(203, 75, 22), // #cb4b16 orange
+            link: Color::Rgb(38, 139, 210),       // #268bd2 blue
+
+            list_bullet: Color::Rgb(133, 153, 0), // #859900 green
+            code_badge_fg: Color::Rgb(0, 43, 54), // #002b36 base03 (dark bg)
+            code_badge_bg: Color::Rgb(42, 161, 152), // #2aa198 cyan
+
+            table_border: Color::Rgb(88, 110, 117), // #586e75 base01
+            rule: Color::Rgb(88, 110, 117),         // #586e75 base01
+            quote_prefix: Color::Rgb(88, 110, 117), // #586e75 base01
+
+            statusbar_fg: Color::Rgb(253, 246, 227), // #fdf6e3 base3
+            statusbar_bg: Color::Rgb(7, 54, 66),     // #073642 base02
+            statusbar_error_bg: Color::Rgb(220, 50, 47), // #dc322f red
+
+            toc_highlight_fg: Color::Rgb(0, 43, 54), // #002b36 base03
+            toc_highlight_bg: Color::Rgb(181, 137, 0), // #b58900 yellow
+        }
+    }
+
+    /// Solarized Light テーマ。
+    /// syntect: "Solarized (light)"（syntect 5.3.0 default-themes に同梱）。
+    pub fn solarized_light() -> Self {
+        Self {
+            id: "solarized-light",
+            syntect_theme: "Solarized (light)",
+
+            // 公式 Solarized パレットからの選定
+            heading1: Color::Rgb(38, 139, 210), // #268bd2 blue
+            heading2: Color::Rgb(42, 161, 152), // #2aa198 cyan
+            heading3_plus: Color::Rgb(108, 113, 196), // #6c71c4 violet
+
+            code_inline: Color::Rgb(203, 75, 22), // #cb4b16 orange
+            link: Color::Rgb(38, 139, 210),       // #268bd2 blue
+
+            list_bullet: Color::Rgb(133, 153, 0), // #859900 green
+            code_badge_fg: Color::Rgb(253, 246, 227), // #fdf6e3 base3
+            code_badge_bg: Color::Rgb(88, 110, 117), // #586e75 base01 (5.11:1 vs #fdf6e3 — WCAG AA)
+
+            table_border: Color::Rgb(147, 161, 161), // #93a1a1 base1
+            rule: Color::Rgb(147, 161, 161),         // #93a1a1 base1
+            quote_prefix: Color::Rgb(147, 161, 161), // #93a1a1 base1
+
+            statusbar_fg: Color::Rgb(253, 246, 227), // #fdf6e3 base3
+            statusbar_bg: Color::Rgb(88, 110, 117),  // #586e75 base01 (5.11:1 vs #fdf6e3 — WCAG AA)
+            statusbar_error_bg: Color::Rgb(220, 50, 47), // #dc322f red
+
+            toc_highlight_fg: Color::Rgb(253, 246, 227), // #fdf6e3 base3
+            toc_highlight_bg: Color::Rgb(88, 110, 117), // #586e75 base01 (5.11:1 vs #fdf6e3 — WCAG AA)
+        }
+    }
+
     /// テーマ ID 文字列から `TuiTheme` を返す。未知 ID は default（`vscode-dark`）。
     pub fn from_id(id: &str) -> Self {
         match id {
@@ -173,6 +238,8 @@ impl TuiTheme {
             "vscode-dark" => Self::vscode_dark(),
             "github-light" => Self::github_light(),
             "github-dark" => Self::github_dark(),
+            "solarized-light" => Self::solarized_light(),
+            "solarized-dark" => Self::solarized_dark(),
             _ => {
                 eprintln!(
                     "mdview: unknown theme id {:?}, falling back to default (vscode-dark)",
@@ -203,24 +270,28 @@ mod tests {
     fn from_id_vscode_dark_returns_correct_id() {
         let theme = TuiTheme::from_id("vscode-dark");
         assert_eq!(theme.id, "vscode-dark");
+        assert_eq!(theme.syntect_theme, "base16-ocean.dark");
     }
 
     #[test]
     fn from_id_vscode_light_returns_correct_id() {
         let theme = TuiTheme::from_id("vscode-light");
         assert_eq!(theme.id, "vscode-light");
+        assert_eq!(theme.syntect_theme, "base16-ocean.light");
     }
 
     #[test]
     fn from_id_github_dark_returns_correct_id() {
         let theme = TuiTheme::from_id("github-dark");
         assert_eq!(theme.id, "github-dark");
+        assert_eq!(theme.syntect_theme, "base16-eighties.dark");
     }
 
     #[test]
     fn from_id_github_light_returns_correct_id() {
         let theme = TuiTheme::from_id("github-light");
         assert_eq!(theme.id, "github-light");
+        assert_eq!(theme.syntect_theme, "InspiredGitHub");
     }
 
     #[test]
@@ -238,6 +309,8 @@ mod tests {
             TuiTheme::vscode_light(),
             TuiTheme::github_dark(),
             TuiTheme::github_light(),
+            TuiTheme::solarized_dark(),
+            TuiTheme::solarized_light(),
         ];
         for t in &themes {
             assert!(
@@ -247,5 +320,19 @@ mod tests {
                 t.id
             );
         }
+    }
+
+    #[test]
+    fn from_id_solarized_dark_returns_correct_id() {
+        let theme = TuiTheme::from_id("solarized-dark");
+        assert_eq!(theme.id, "solarized-dark");
+        assert_eq!(theme.syntect_theme, "Solarized (dark)");
+    }
+
+    #[test]
+    fn from_id_solarized_light_returns_correct_id() {
+        let theme = TuiTheme::from_id("solarized-light");
+        assert_eq!(theme.id, "solarized-light");
+        assert_eq!(theme.syntect_theme, "Solarized (light)");
     }
 }
