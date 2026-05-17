@@ -1,6 +1,7 @@
 pub mod parser;
 pub mod types;
 
+pub use parser::collect_heading_anchors;
 pub use types::*;
 
 #[cfg(feature = "wasm")]

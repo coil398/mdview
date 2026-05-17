@@ -9,7 +9,7 @@ use pulldown_cmark::{
 };
 
 use crate::types::{
-    Alignment, Block, Cell, Document, ListItem, Span, SpanKind, TocEntry, SCHEMA_VERSION,
+    Alignment, AnchorKey, Block, Cell, Document, ListItem, Span, SpanKind, TocEntry, SCHEMA_VERSION,
 };
 
 // ===========================================================================
@@ -636,6 +636,57 @@ fn map_alignment(a: PdAlignment) -> Alignment {
     }
 }
 
+// ===========================================================================
+// Public utility: collect_heading_anchors
+// ===========================================================================
+
+/// 文書内の全見出しを GUI（renderer.js `collectHeadingMeta`）と互換の
+/// [`AnchorKey`] 配列として返す。
+///
+/// ロジック:
+/// - `(heading_level, heading_text)` のペアに対して `occurrence_index` を 0 から連番で割り当てる。
+/// - `Block::List` / `Block::BlockQuote` 内の見出しも再帰的に拾う（GUI 互換）。
+/// - `heading_text` は Span の `text` フィールドの単純連結（Bold/Italic/Link URL は含まない）。
+pub fn collect_heading_anchors(blocks: &[Block]) -> Vec<AnchorKey> {
+    let mut counter: std::collections::HashMap<(u8, String), u32> =
+        std::collections::HashMap::new();
+    let mut result = Vec::new();
+    collect_heading_anchors_inner(blocks, &mut counter, &mut result);
+    result
+}
+
+fn collect_heading_anchors_inner(
+    blocks: &[Block],
+    counter: &mut std::collections::HashMap<(u8, String), u32>,
+    result: &mut Vec<AnchorKey>,
+) {
+    for block in blocks {
+        match block {
+            Block::Heading { level, spans } => {
+                let text: String = spans.iter().map(|s| s.text.as_str()).collect();
+                let occ = counter.entry((*level, text.clone())).or_insert(0);
+                let occurrence_index = *occ;
+                *occ += 1;
+                result.push(AnchorKey {
+                    heading_text: text,
+                    heading_level: *level,
+                    occurrence_index,
+                });
+            }
+            Block::List { items, .. } => {
+                for item in items {
+                    collect_heading_anchors_inner(&item.blocks, counter, result);
+                }
+            }
+            Block::BlockQuote { blocks: inner } => {
+                collect_heading_anchors_inner(inner, counter, result);
+            }
+            // Paragraph / CodeBlock / Table / Rule はスキップ
+            _ => {}
+        }
+    }
+}
+
 /// pulldown-cmark の `Tag` がブロック系か（インライン系でないか）を判定する。
 /// ブロック系の Start を受けたタイミングで暗黙 Paragraph をクローズするのに用いる。
 fn is_block_tag(tag: &Tag) -> bool {
@@ -691,7 +742,7 @@ mod tests {
         panic!("Paragraph が見つかりません: {:?}", doc.blocks);
     }
 
-    fn first_heading<'a>(doc: &'a Document) -> (&'a u8, &'a [Span]) {
+    fn first_heading(doc: &Document) -> (&u8, &[Span]) {
         for b in &doc.blocks {
             if let Block::Heading { level, spans } = b {
                 return (level, spans);
@@ -1060,5 +1111,159 @@ mod tests {
         if let SpanKind::Link { url } = &link.kind {
             assert!(url.starts_with("javascript:"));
         }
+    }
+
+    // -------------------------------------------------------------------
+    // collect_heading_anchors
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn collect_heading_anchors_basic() {
+        let md = "# T1\n\n## S1\n\n## S2\n";
+        let doc = parse_markdown(md);
+        let anchors = collect_heading_anchors(&doc.blocks);
+        assert_eq!(anchors.len(), 3);
+        assert_eq!(
+            anchors[0],
+            AnchorKey {
+                heading_text: "T1".to_string(),
+                heading_level: 1,
+                occurrence_index: 0,
+            }
+        );
+        assert_eq!(
+            anchors[1],
+            AnchorKey {
+                heading_text: "S1".to_string(),
+                heading_level: 2,
+                occurrence_index: 0,
+            }
+        );
+        assert_eq!(
+            anchors[2],
+            AnchorKey {
+                heading_text: "S2".to_string(),
+                heading_level: 2,
+                occurrence_index: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn collect_heading_anchors_duplicates() {
+        let md = "# Dup\n\n## Sub\n\n# Dup\n\n# Dup\n";
+        let doc = parse_markdown(md);
+        let anchors = collect_heading_anchors(&doc.blocks);
+        // occurrence_index が 0, 1, 2 と増える
+        let dup_anchors: Vec<&AnchorKey> = anchors
+            .iter()
+            .filter(|a| a.heading_text == "Dup" && a.heading_level == 1)
+            .collect();
+        assert_eq!(dup_anchors.len(), 3);
+        assert_eq!(dup_anchors[0].occurrence_index, 0);
+        assert_eq!(dup_anchors[1].occurrence_index, 1);
+        assert_eq!(dup_anchors[2].occurrence_index, 2);
+    }
+
+    #[test]
+    fn collect_heading_anchors_distinct_levels() {
+        // 同名でもレベルが異なれば独立カウント
+        let md = "# Same\n\n## Same\n\n# Same\n\n## Same\n";
+        let doc = parse_markdown(md);
+        let anchors = collect_heading_anchors(&doc.blocks);
+        let h1: Vec<u32> = anchors
+            .iter()
+            .filter(|a| a.heading_level == 1)
+            .map(|a| a.occurrence_index)
+            .collect();
+        let h2: Vec<u32> = anchors
+            .iter()
+            .filter(|a| a.heading_level == 2)
+            .map(|a| a.occurrence_index)
+            .collect();
+        assert_eq!(h1, vec![0, 1]);
+        assert_eq!(h2, vec![0, 1]);
+    }
+
+    #[test]
+    fn collect_heading_anchors_nested_in_list() {
+        // List 内の見出しも拾う（pulldown-cmark の例外パターン）
+        // tight list では heading が item blocks に入ることがある
+        let blocks = vec![
+            Block::List {
+                ordered: false,
+                start: None,
+                items: vec![mdview_core_test_list_item_with_heading(2, "InList")],
+            },
+            Block::Heading {
+                level: 1,
+                spans: vec![Span {
+                    text: "Top".to_string(),
+                    kind: SpanKind::Normal,
+                }],
+            },
+        ];
+        let anchors = collect_heading_anchors(&blocks);
+        assert_eq!(anchors.len(), 2);
+        assert_eq!(anchors[0].heading_text, "InList");
+        assert_eq!(anchors[0].heading_level, 2);
+        assert_eq!(anchors[1].heading_text, "Top");
+        assert_eq!(anchors[1].heading_level, 1);
+    }
+
+    fn mdview_core_test_list_item_with_heading(level: u8, text: &str) -> crate::types::ListItem {
+        crate::types::ListItem {
+            blocks: vec![Block::Heading {
+                level,
+                spans: vec![Span {
+                    text: text.to_string(),
+                    kind: SpanKind::Normal,
+                }],
+            }],
+        }
+    }
+
+    #[test]
+    fn collect_heading_anchors_empty() {
+        let anchors = collect_heading_anchors(&[]);
+        assert!(anchors.is_empty());
+    }
+
+    /// List 内に同名のトップレベル Heading より先に出現する Heading がある場合、
+    /// トップレベル Heading の occurrence_index が GUI と一致する（1 になる）ことを確認する。
+    ///
+    /// これは `App::load()` の `count_anchors_in_block` ベース抽出ロジックの正確性を担保する。
+    /// ```markdown
+    /// - ## Same  （List 内 Heading: occurrence_index=0）
+    /// ## Same    （トップレベル Heading: occurrence_index=1）
+    /// ```
+    #[test]
+    fn collect_heading_anchors_list_heading_before_toplevel_same_name() {
+        let blocks = vec![
+            Block::List {
+                ordered: false,
+                start: None,
+                items: vec![mdview_core_test_list_item_with_heading(2, "Same")],
+            },
+            Block::Heading {
+                level: 2,
+                spans: vec![Span {
+                    text: "Same".to_string(),
+                    kind: SpanKind::Normal,
+                }],
+            },
+        ];
+        let anchors = collect_heading_anchors(&blocks);
+        assert_eq!(anchors.len(), 2);
+
+        // List 内の "Same" は occurrence_index=0
+        assert_eq!(anchors[0].heading_text, "Same");
+        assert_eq!(anchors[0].heading_level, 2);
+        assert_eq!(anchors[0].occurrence_index, 0);
+
+        // トップレベルの "Same" は occurrence_index=1（GUI と一致）
+        assert_eq!(anchors[1].heading_text, "Same");
+        assert_eq!(anchors[1].heading_level, 2);
+        assert_eq!(anchors[1].occurrence_index, 1);
     }
 }

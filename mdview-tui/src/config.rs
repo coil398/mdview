@@ -15,29 +15,50 @@ use serde::{Deserialize, Serialize};
 /// config.json のスキーマ。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    /// スキーマバージョン。現行 Phase1 は 1。
+    /// スキーマバージョン。現行 Phase2 は 2。
     #[serde(default = "default_schema_version")]
     pub schema_version: u32,
     /// テーマ ID（例: "vscode-dark"）。
     #[serde(default = "default_theme")]
     pub theme: String,
-    // 将来拡張用: tui / electron キー等を追加するための余地。
-    // `#[serde(default)]` により JSON に存在しなくても受け取れる。
+    /// 見出しメモ機能の設定。
+    /// v1 JSON に存在しない場合は `#[serde(default)]` により `NotesConfig::default()` が入る。
+    #[serde(default)]
+    pub notes: NotesConfig,
+}
+
+/// 見出しメモ機能の設定。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotesConfig {
+    /// 起動時にメモパネルを開いた状態にするか。
+    #[serde(default = "default_notes_panel_open")]
+    pub panel_open: bool,
 }
 
 fn default_schema_version() -> u32 {
-    1
+    2
 }
 
 fn default_theme() -> String {
     "vscode-dark".to_string()
 }
 
+fn default_notes_panel_open() -> bool {
+    true
+}
+
+impl Default for NotesConfig {
+    fn default() -> Self {
+        Self { panel_open: true }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
-            schema_version: 1,
+            schema_version: 2,
             theme: "vscode-dark".to_string(),
+            notes: NotesConfig::default(),
         }
     }
 }
@@ -116,15 +137,15 @@ mod tests {
         let path = PathBuf::from("/tmp/mdview_test_nonexistent_config_12345.json");
         let cfg = Config::load_from_path(&path);
         assert_eq!(cfg.theme, "vscode-dark");
-        assert_eq!(cfg.schema_version, 1);
+        assert_eq!(cfg.schema_version, 2);
     }
 
     #[test]
     fn load_valid_config() {
-        let f = write_temp_config(r#"{"schema_version":1,"theme":"github-light"}"#);
+        let f = write_temp_config(r#"{"schema_version":2,"theme":"github-light"}"#);
         let cfg = Config::load_from_path(&f.path().to_path_buf());
         assert_eq!(cfg.theme, "github-light");
-        assert_eq!(cfg.schema_version, 1);
+        assert_eq!(cfg.schema_version, 2);
     }
 
     #[test]
@@ -136,7 +157,7 @@ mod tests {
 
     #[test]
     fn load_missing_theme_field_returns_default() {
-        let f = write_temp_config(r#"{"schema_version":1}"#);
+        let f = write_temp_config(r#"{"schema_version":2}"#);
         let cfg = Config::load_from_path(&f.path().to_path_buf());
         assert_eq!(cfg.theme, "vscode-dark");
     }
@@ -144,8 +165,30 @@ mod tests {
     #[test]
     fn load_unknown_theme_id_passes_through() {
         // unknown ID はそのまま返す。TuiTheme::from_id がフォールバックを担当
-        let f = write_temp_config(r#"{"schema_version":1,"theme":"unknown-theme"}"#);
+        let f = write_temp_config(r#"{"schema_version":2,"theme":"unknown-theme"}"#);
         let cfg = Config::load_from_path(&f.path().to_path_buf());
         assert_eq!(cfg.theme, "unknown-theme");
+    }
+
+    #[test]
+    fn load_v1_json_fills_default_notes_panel_open() {
+        // v1 JSON（notes フィールドなし）を読んで notes.panel_open が true になること
+        let f = write_temp_config(r#"{"schema_version":1,"theme":"github-light"}"#);
+        let cfg = Config::load_from_path(&f.path().to_path_buf());
+        assert_eq!(cfg.theme, "github-light");
+        assert!(
+            cfg.notes.panel_open,
+            "v1 JSON からの読み込みで notes.panel_open が true になること"
+        );
+    }
+
+    #[test]
+    fn load_v2_with_notes_panel_open_false() {
+        // v2 JSON で panel_open: false が読めること
+        let f = write_temp_config(
+            r#"{"schema_version":2,"theme":"vscode-dark","notes":{"panel_open":false}}"#,
+        );
+        let cfg = Config::load_from_path(&f.path().to_path_buf());
+        assert!(!cfg.notes.panel_open);
     }
 }

@@ -25,7 +25,8 @@ fn main() -> anyhow::Result<()> {
     let config = Config::load();
     let theme_id = cli.theme.as_deref().unwrap_or(&config.theme).to_string();
     let theme = TuiTheme::from_id(&theme_id);
+    let notes_panel_open = config.notes.panel_open;
 
-    let mut app = mdview_tui::app::App::new(cli.file, theme)?;
+    let mut app = mdview_tui::app::App::new(cli.file, theme, notes_panel_open)?;
     app.run()
 }

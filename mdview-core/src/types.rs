@@ -76,6 +76,17 @@ pub struct TocEntry {
     pub level: u8,
 }
 
+/// 見出しを永続化メモのキーとして特定するためのアンカー。
+///
+/// GUI（renderer.js の `collectHeadingMeta`）と完全互換のフィールド名。
+/// JSON シリアライズ形式は `{"heading_text": "...", "heading_level": 1, "occurrence_index": 0}`。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnchorKey {
+    pub heading_text: String,
+    pub heading_level: u8,
+    pub occurrence_index: u32,
+}
+
 /// JSON スキーマのバージョン番号。破壊的変更ごとに増加する。
 pub const SCHEMA_VERSION: u32 = 2;
 

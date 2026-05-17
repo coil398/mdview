@@ -2,19 +2,21 @@ use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::Frame;
+use ratatui_textarea::TextArea;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
 use std::time::Duration;
 
-use mdview_core::parser::parse_markdown;
-use mdview_core::TocEntry;
+use mdview_core::parser::{collect_heading_anchors, parse_markdown};
+use mdview_core::{AnchorKey, Block, TocEntry};
 
 use crate::highlighter::Highlighter;
+use crate::notes;
 use crate::style::{convert_document, StyledOutput};
 use crate::theme::TuiTheme;
 use crate::types::StyledLine;
-use crate::ui::{statusbar, toc, viewer};
+use crate::ui::{notes as ui_notes, statusbar, toc, viewer};
 use crate::watcher::FileWatcher;
 
 pub struct App {
@@ -35,10 +37,31 @@ pub struct App {
     pub status_error: Option<(String, std::time::Instant)>,
     /// 現在適用中のテーマ。
     pub theme: TuiTheme,
+
+    // ── メモ機能フィールド ──────────────────────────────────────────────
+    /// 現在開いている文書の全見出しアンカー（GUI collectHeadingMeta 互換、List/BlockQuote 内も含む）。
+    pub anchors: Vec<AnchorKey>,
+    /// `anchors[i]` が対応するトップレベル `Document.blocks` の index。
+    /// `anchors` と件数は必ずしも一致しない（リスト内 Heading は block_index を持てない）ため、
+    /// トップレベル Heading のみを対象とした別配列として保持する。
+    pub anchor_block_indices: Vec<usize>,
+    /// トップレベル Heading のみの anchor 配列（`block_starts` と対応させるため分離）。
+    pub toplevel_anchors: Vec<AnchorKey>,
+    /// メモパネル開閉フラグ。
+    pub notes_open: bool,
+    /// 編集モード（Insert）かどうか。
+    pub notes_edit_mode: bool,
+    /// notes 永続化ストア（全ファイル分のメモ）。
+    pub notes_store: notes::NotesStore,
+    /// 現フォーカス見出し（スクロール位置より前の最も近い Heading）。
+    /// `None` = スクロール位置より前に見出しなし。
+    pub current_anchor: Option<AnchorKey>,
+    /// ratatui-textarea 編集バッファ。Insert モード時のみ意味を持つ。
+    pub notes_textarea: TextArea<'static>,
 }
 
 impl App {
-    pub fn new(path: PathBuf, theme: TuiTheme) -> Result<Self> {
+    pub fn new(path: PathBuf, theme: TuiTheme, notes_panel_open: bool) -> Result<Self> {
         let highlighter = Arc::new(
             Highlighter::with_syntect_theme(theme.syntect_theme).unwrap_or_else(|e| {
                 eprintln!("mdview: syntect theme load failed: {}. using default.", e);
@@ -62,15 +85,62 @@ impl App {
             wrapped_line_count: 0,
             status_error: None,
             theme,
+            // メモ機能フィールド初期化
+            anchors: Vec::new(),
+            anchor_block_indices: Vec::new(),
+            toplevel_anchors: Vec::new(),
+            notes_open: notes_panel_open,
+            notes_edit_mode: false,
+            notes_store: notes::load(),
+            current_anchor: None,
+            notes_textarea: TextArea::default(),
         };
 
         app.load()?;
+        // 初期 scroll=0 時点での見出し検出
+        app.refresh_current_anchor();
+        if app.notes_open {
+            app.load_textarea_for_current();
+        }
         Ok(app)
     }
 
     pub fn load(&mut self) -> Result<()> {
         let text = std::fs::read_to_string(&self.filepath)?;
         let doc = parse_markdown(&text);
+
+        // GUI 互換の全 anchor（List/BlockQuote 内も含む）を計算
+        self.anchors = collect_heading_anchors(&doc.blocks);
+
+        // トップレベル Heading のみの anchor と block_index を計算
+        // occurrence_index は全 anchors から抽出して GUI と同じカウンタを維持する
+        let mut toplevel_anchors = Vec::new();
+        let mut anchor_block_indices = Vec::new();
+
+        // collect_heading_anchors を一度走らせた結果から、トップレベル Heading を抽出する。
+        // 各トップレベルブロックが再帰的に生成する anchor の数（offset）を正確に計算し、
+        // anchors[anchor_offset] でトップレベル Heading に対応する anchor を特定する。
+        // これにより「List 内 Heading が同名のトップレベル Heading より前に出現する場合でも
+        // 正しい occurrence_index を持つ anchor が選ばれる」ことを保証する。
+        {
+            let mut anchor_offset = 0usize;
+            for (block_index, block) in doc.blocks.iter().enumerate() {
+                let anchor_count = count_anchors_in_block(block);
+                if matches!(block, Block::Heading { .. }) {
+                    // トップレベル Heading は anchors[anchor_offset] に対応する
+                    // (anchor_count == 1 のはず)
+                    if let Some(anchor) = self.anchors.get(anchor_offset) {
+                        toplevel_anchors.push(anchor.clone());
+                        anchor_block_indices.push(block_index);
+                    }
+                }
+                anchor_offset += anchor_count;
+            }
+        }
+
+        self.toplevel_anchors = toplevel_anchors;
+        self.anchor_block_indices = anchor_block_indices;
+
         let StyledOutput {
             lines,
             block_starts,
@@ -82,6 +152,9 @@ impl App {
         if self.toc_sel >= self.toc.len() {
             self.toc_sel = 0;
         }
+
+        // ロード後に current_anchor を更新
+        self.refresh_current_anchor();
         Ok(())
     }
 
@@ -100,9 +173,14 @@ impl App {
             if self.reload_rx.try_recv().is_ok() {
                 // 余分な通知を drain する
                 while self.reload_rx.try_recv().is_ok() {}
+                // 編集中ならメモを先に保存してからリロード
+                self.flush_note_edit_mode();
                 if let Err(e) = self.load() {
                     self.status_error =
                         Some((format!("Reload failed: {}", e), std::time::Instant::now()));
+                }
+                if self.notes_open {
+                    self.load_textarea_for_current();
                 }
             }
 
@@ -132,6 +210,22 @@ impl App {
                         continue;
                     }
 
+                    // Insert モード中はメモ編集キーのみ処理
+                    if self.notes_edit_mode {
+                        match key.code {
+                            KeyCode::Esc => {
+                                // 編集モード離脱して保存
+                                self.flush_note_edit_mode();
+                            }
+                            _ => {
+                                // ratatui-textarea にキーを渡す
+                                self.notes_textarea
+                                    .input(ratatui_textarea::Input::from(key));
+                            }
+                        }
+                        continue;
+                    }
+
                     let max_scroll = if self.wrapped_line_count > 0 {
                         self.wrapped_line_count.saturating_sub(content_height)
                     } else {
@@ -139,6 +233,7 @@ impl App {
                     };
 
                     match key.code {
+                        // `q` は終了、`Esc` はメモパネル内での編集中でなければ終了
                         KeyCode::Char('q') | KeyCode::Esc => break,
 
                         KeyCode::Char('j') | KeyCode::Down => {
@@ -148,6 +243,10 @@ impl App {
                                 }
                             } else {
                                 self.scroll = (self.scroll + 1).min(max_scroll);
+                                self.refresh_current_anchor();
+                                if self.notes_open {
+                                    self.load_textarea_for_current();
+                                }
                             }
                         }
 
@@ -156,40 +255,94 @@ impl App {
                                 self.toc_sel = self.toc_sel.saturating_sub(1);
                             } else {
                                 self.scroll = self.scroll.saturating_sub(1);
+                                self.refresh_current_anchor();
+                                if self.notes_open {
+                                    self.load_textarea_for_current();
+                                }
                             }
                         }
 
                         KeyCode::PageDown => {
                             self.scroll =
                                 (self.scroll + content_height.saturating_sub(1)).min(max_scroll);
+                            self.refresh_current_anchor();
+                            if self.notes_open {
+                                self.load_textarea_for_current();
+                            }
                         }
 
                         KeyCode::PageUp => {
                             self.scroll =
                                 self.scroll.saturating_sub(content_height.saturating_sub(1));
+                            self.refresh_current_anchor();
+                            if self.notes_open {
+                                self.load_textarea_for_current();
+                            }
                         }
 
                         KeyCode::Char('g') => {
                             self.scroll = 0;
+                            self.refresh_current_anchor();
+                            if self.notes_open {
+                                self.load_textarea_for_current();
+                            }
                         }
 
                         KeyCode::Char('G') => {
                             self.scroll = max_scroll;
+                            self.refresh_current_anchor();
+                            if self.notes_open {
+                                self.load_textarea_for_current();
+                            }
                         }
 
                         KeyCode::Char('t') => {
                             self.toc_open = !self.toc_open;
+                            // TOC を開くときは Notes を閉じる（排他制御）
+                            if self.toc_open {
+                                // 編集中なら先に保存してから閉じる（plan.md Step E-1 対応）
+                                self.flush_note_edit_mode();
+                                self.notes_open = false;
+                            }
                             if self.toc_open && self.toc_sel >= self.toc.len() {
                                 self.toc_sel = 0;
                             }
                         }
 
+                        KeyCode::Char('n') => {
+                            if self.notes_open {
+                                // 編集中なら先に保存してから閉じる（plan.md Step E-1 対応）
+                                self.flush_note_edit_mode();
+                                // パネルを閉じる
+                                self.notes_open = false;
+                            } else {
+                                // パネルを開く（TOC を閉じる）
+                                self.notes_open = true;
+                                self.toc_open = false;
+                                self.refresh_current_anchor();
+                                self.load_textarea_for_current();
+                            }
+                        }
+
+                        KeyCode::Char('i') => {
+                            // メモパネルが開いていて、見出しフォーカスがある場合のみ編集モードへ
+                            if self.notes_open && self.current_anchor.is_some() {
+                                self.notes_edit_mode = true;
+                                self.load_textarea_for_current();
+                            }
+                        }
+
                         KeyCode::Char('r') => {
+                            // 手動リロード前にメモを保存
+                            self.flush_note_edit_mode();
                             if let Err(e) = self.load() {
                                 self.status_error = Some((
                                     format!("Reload failed: {}", e),
                                     std::time::Instant::now(),
                                 ));
+                            }
+                            if self.notes_open {
+                                self.load_textarea_for_current();
                             }
                         }
 
@@ -203,6 +356,10 @@ impl App {
                                     .unwrap_or(0);
                                 self.scroll = target_line.min(max_scroll);
                                 self.toc_open = false;
+                                self.refresh_current_anchor();
+                                if self.notes_open {
+                                    self.load_textarea_for_current();
+                                }
                             }
                         }
 
@@ -228,26 +385,51 @@ impl App {
         let content_area = vertical_chunks[0];
         let status_area = vertical_chunks[1];
 
-        // TOCが開いている場合は水平分割
+        // TOC または Notes パネルが開いている場合は水平分割
         let viewer_area: Rect;
-        let toc_area_opt: Option<Rect>;
+        let side_area_opt: Option<(Rect, bool)>; // (area, is_notes)
 
-        if self.toc_open && !self.toc.is_empty() {
+        if self.notes_open {
+            let panel_width = 40u16.min(content_area.width / 2);
+            let horizontal_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Min(0), Constraint::Length(panel_width)])
+                .split(content_area);
+            viewer_area = horizontal_chunks[0];
+            side_area_opt = Some((horizontal_chunks[1], true));
+        } else if self.toc_open && !self.toc.is_empty() {
             let toc_width = 40u16.min(content_area.width / 2);
             let horizontal_chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Length(toc_width), Constraint::Min(0)])
                 .split(content_area);
-            toc_area_opt = Some(horizontal_chunks[0]);
             viewer_area = horizontal_chunks[1];
+            side_area_opt = Some((horizontal_chunks[0], false));
         } else {
-            toc_area_opt = None;
             viewer_area = content_area;
+            side_area_opt = None;
         }
 
-        // TOC描画
-        if let Some(toc_area) = toc_area_opt {
-            toc::render(frame, toc_area, &self.toc, self.toc_sel, &self.theme);
+        // サイドパネル描画
+        if let Some((side_area, is_notes)) = side_area_opt {
+            if is_notes {
+                let current_note = self.current_anchor.as_ref().and_then(|a| {
+                    let entries =
+                        notes::get_entries_for(&self.notes_store, &self.filepath.to_string_lossy());
+                    notes::find_entry(entries, a).map(|e| e.note.as_str())
+                });
+                ui_notes::render(
+                    frame,
+                    side_area,
+                    self.current_anchor.as_ref(),
+                    current_note,
+                    self.notes_edit_mode,
+                    &self.notes_textarea,
+                    &self.theme,
+                );
+            } else {
+                toc::render(frame, side_area, &self.toc, self.toc_sel, &self.theme);
+            }
         }
 
         // ビューア描画（wrap 後行数を返す）
@@ -261,10 +443,287 @@ impl App {
             self.scroll,
             self.lines.len().max(1),
             self.toc_open,
+            self.notes_open,
+            self.notes_edit_mode,
             self.status_error.as_ref().map(|(m, _)| m.as_str()),
             &self.theme,
         );
 
         wrapped_line_count
+    }
+
+    // =========================================================================
+    // メモ機能ヘルパーメソッド
+    // =========================================================================
+
+    /// スクロール位置から現在フォーカスしている見出しを検出して `current_anchor` を更新する。
+    ///
+    /// `block_starts[anchor_block_indices[i]] <= self.scroll` を満たす最大の i を探す。
+    pub fn refresh_current_anchor(&mut self) {
+        let new = self.find_current_anchor().cloned();
+        if new != self.current_anchor {
+            self.current_anchor = new;
+        }
+    }
+
+    /// 現在のスクロール位置に対応する anchor を返す（不変参照）。
+    fn find_current_anchor(&self) -> Option<&AnchorKey> {
+        find_current_anchor_in(
+            &self.anchor_block_indices,
+            &self.toplevel_anchors,
+            &self.block_starts,
+            self.scroll,
+        )
+    }
+
+    /// `current_anchor` に対応するメモを `notes_store` から取得して `textarea` にセットする。
+    pub fn load_textarea_for_current(&mut self) {
+        let note_text = self
+            .current_anchor
+            .as_ref()
+            .and_then(|a| {
+                let entries =
+                    notes::get_entries_for(&self.notes_store, &self.filepath.to_string_lossy());
+                notes::find_entry(entries, a).map(|e| e.note.clone())
+            })
+            .unwrap_or_default();
+
+        let lines: Vec<String> = if note_text.is_empty() {
+            vec![]
+        } else {
+            note_text.lines().map(String::from).collect()
+        };
+        self.notes_textarea = TextArea::from(lines);
+    }
+
+    /// 編集モード中であれば現在のメモを保存し、編集モードを終了する。
+    ///
+    /// 保存失敗時は `status_error` に転写する。
+    fn flush_note_edit_mode(&mut self) {
+        if self.notes_edit_mode {
+            if let Err(e) = self.persist_current_note() {
+                self.status_error = Some((
+                    format!("Save notes failed: {}", e),
+                    std::time::Instant::now(),
+                ));
+            }
+            self.notes_edit_mode = false;
+        }
+    }
+
+    /// 現在の `notes_textarea` の内容を `notes_store` に保存し、ファイルに書き込む。
+    ///
+    /// `current_anchor` が `None` の場合は no-op。
+    pub fn persist_current_note(&mut self) -> anyhow::Result<()> {
+        let anchor = match self.current_anchor.clone() {
+            Some(a) => a,
+            None => return Ok(()),
+        };
+
+        let note_text = self.notes_textarea.lines().join("\n");
+        let file_path = self.filepath.to_string_lossy().to_string();
+        let now = notes::now_iso();
+
+        // 現在のエントリを取得してコピー
+        let mut entries: Vec<notes::NoteEntry> =
+            notes::get_entries_for(&self.notes_store, &file_path).to_vec();
+
+        if let Some(entry) = notes::find_entry_mut(&mut entries, &anchor) {
+            // 既存エントリを更新
+            entry.note = note_text;
+            entry.updated_at = Some(now.clone());
+        } else {
+            // 新規エントリを追加
+            entries.push(notes::NoteEntry {
+                heading_text: anchor.heading_text.clone(),
+                heading_level: anchor.heading_level,
+                occurrence_index: anchor.occurrence_index,
+                note: note_text,
+                created_at: Some(now.clone()),
+                updated_at: Some(now.clone()),
+            });
+        }
+
+        notes::set_entries_for(&mut self.notes_store, &file_path, entries, &now);
+        notes::save(&self.notes_store).map_err(|e| anyhow::anyhow!("notes save failed: {}", e))?;
+
+        Ok(())
+    }
+}
+
+// ===========================================================================
+// ヘルパー関数
+// ===========================================================================
+
+/// 指定スクロール位置に対応する anchor を返す（モジュールレベル pure function）。
+///
+/// `block_starts[anchor_block_indices[i]] <= scroll` を満たす最大の i を探し、
+/// `toplevel_anchors[i]` を返す。`App::find_current_anchor` の委譲先。
+/// テストから直接呼べるよう `App` impl 外に配置する（`count_anchors_in_block` と同パターン）。
+fn find_current_anchor_in<'a>(
+    anchor_block_indices: &[usize],
+    toplevel_anchors: &'a [AnchorKey],
+    block_starts: &[usize],
+    scroll: usize,
+) -> Option<&'a AnchorKey> {
+    let mut best: Option<usize> = None;
+    for (i, &block_index) in anchor_block_indices.iter().enumerate() {
+        if let Some(&line) = block_starts.get(block_index) {
+            if line <= scroll {
+                best = Some(i);
+            } else {
+                break;
+            }
+        }
+    }
+    best.and_then(|i| toplevel_anchors.get(i))
+}
+
+/// トップレベルブロック 1 つが再帰的に生成する anchor（見出し）の数を返す。
+///
+/// `collect_heading_anchors_inner` と同一の再帰パターン。
+/// `App::load()` の `toplevel_anchors` 抽出時に `anchor_offset` を正確に計算するために使う。
+fn count_anchors_in_block(block: &Block) -> usize {
+    match block {
+        Block::Heading { .. } => 1,
+        Block::List { items, .. } => items
+            .iter()
+            .flat_map(|item| item.blocks.iter())
+            .map(count_anchors_in_block)
+            .sum(),
+        Block::BlockQuote { blocks: inner } => inner.iter().map(count_anchors_in_block).sum(),
+        _ => 0,
+    }
+}
+
+// ===========================================================================
+// テスト
+// ===========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::{count_anchors_in_block, find_current_anchor_in};
+    use mdview_core::{AnchorKey, Block};
+
+    fn make_anchor(text: &str, level: u8, occ: u32) -> AnchorKey {
+        AnchorKey {
+            heading_text: text.to_string(),
+            heading_level: level,
+            occurrence_index: occ,
+        }
+    }
+
+    // =========================================================================
+    // find_current_anchor_in のテスト
+    // =========================================================================
+
+    #[test]
+    fn find_current_anchor_basic() {
+        // block_starts: [0, 5, 10]
+        // block index 1 (= line 5) が H1、block index 2 (= line 10) が H2
+        let anchor_block_indices = vec![1, 2];
+        let toplevel_anchors = vec![make_anchor("H1", 1, 0), make_anchor("H2", 2, 0)];
+        let block_starts = vec![0, 5, 10];
+
+        // scroll=0 は見出しより前 → None
+        assert!(
+            find_current_anchor_in(&anchor_block_indices, &toplevel_anchors, &block_starts, 0)
+                .is_none()
+        );
+
+        // scroll=5 は最初の見出しと同じ行 → H1
+        assert_eq!(
+            find_current_anchor_in(&anchor_block_indices, &toplevel_anchors, &block_starts, 5)
+                .unwrap()
+                .heading_text,
+            "H1"
+        );
+    }
+
+    #[test]
+    fn find_current_anchor_returns_latest_before_scroll() {
+        // block_starts: [0, 3, 7, 12]
+        // anchor が block_index 1 (line3) と block_index 3 (line12) に対応
+        let anchor_block_indices = vec![1, 3];
+        let toplevel_anchors = vec![make_anchor("First", 1, 0), make_anchor("Second", 1, 1)];
+        let block_starts = vec![0, 3, 7, 12];
+
+        // scroll=8 は line3 <= 8 かつ line12 > 8 → First
+        assert_eq!(
+            find_current_anchor_in(&anchor_block_indices, &toplevel_anchors, &block_starts, 8)
+                .unwrap()
+                .heading_text,
+            "First"
+        );
+    }
+
+    #[test]
+    fn find_current_anchor_no_heading_above() {
+        // 見出しが line 10 にしかない場合、scroll < 10 なら None
+        let anchor_block_indices = vec![2];
+        let toplevel_anchors = vec![make_anchor("Late", 1, 0)];
+        let block_starts = vec![0, 5, 10];
+
+        assert!(
+            find_current_anchor_in(&anchor_block_indices, &toplevel_anchors, &block_starts, 3)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn find_current_anchor_at_exactly_heading_line() {
+        let anchor_block_indices = vec![1];
+        let toplevel_anchors = vec![make_anchor("Exact", 1, 0)];
+        let block_starts = vec![0, 10];
+
+        assert_eq!(
+            find_current_anchor_in(&anchor_block_indices, &toplevel_anchors, &block_starts, 10)
+                .unwrap()
+                .heading_text,
+            "Exact"
+        );
+    }
+
+    // =========================================================================
+    // count_anchors_in_block のテスト
+    // =========================================================================
+
+    #[test]
+    fn count_anchors_in_block_heading_is_1() {
+        let block = Block::Heading {
+            level: 1,
+            spans: vec![],
+        };
+        assert_eq!(count_anchors_in_block(&block), 1);
+    }
+
+    #[test]
+    fn count_anchors_in_block_list_with_nested_headings() {
+        // List 内に Heading 2 つ → count は 2
+        let block = Block::List {
+            ordered: false,
+            start: None,
+            items: vec![
+                mdview_core::types::ListItem {
+                    blocks: vec![Block::Heading {
+                        level: 2,
+                        spans: vec![],
+                    }],
+                },
+                mdview_core::types::ListItem {
+                    blocks: vec![Block::Heading {
+                        level: 3,
+                        spans: vec![],
+                    }],
+                },
+            ],
+        };
+        assert_eq!(count_anchors_in_block(&block), 2);
+    }
+
+    #[test]
+    fn count_anchors_in_block_paragraph_is_0() {
+        let block = Block::Paragraph { lines: vec![] };
+        assert_eq!(count_anchors_in_block(&block), 0);
     }
 }

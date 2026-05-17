@@ -1,6 +1,7 @@
 pub mod app;
 pub mod config;
 pub mod highlighter;
+pub mod notes;
 pub mod style;
 pub mod theme;
 pub mod types;

@@ -15,6 +15,8 @@ pub fn render(
     scroll: usize,
     total: usize,
     toc_open: bool,
+    notes_open: bool,
+    notes_edit_mode: bool,
     status_error: Option<&str>,
     theme: &TuiTheme,
 ) {
@@ -28,14 +30,22 @@ pub fn render(
             100
         };
         let toc_hint = if toc_open { "[t]close" } else { "[t]TOC" };
+        let notes_hint = if notes_edit_mode {
+            "[Esc]back-to-normal"
+        } else if notes_open {
+            "[n]close-notes [i]edit"
+        } else {
+            "[n]notes"
+        };
         (
             format!(
-                " {}  {}/{}  {}%  {}  [j/k]scroll [g/G]top/end [r]force-reload [q]quit",
+                " {}  {}/{}  {}%  {}  {}  [j/k]scroll [g/G]top/end [r]force-reload [q]quit",
                 filename,
                 scroll + 1,
                 total,
                 pct,
-                toc_hint
+                toc_hint,
+                notes_hint,
             ),
             theme.statusbar_bg,
         )
