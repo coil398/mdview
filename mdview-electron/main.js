@@ -291,13 +291,15 @@ function createWindow(filePath, config) {
   // まだ登録されておらず IPC を取りこぼすため、renderer から明示通知を受ける方式にする。
   const onRendererReady = (event) => {
     if (event.sender !== win.webContents) return;
-    ipcMain.removeListener('renderer:ready', onRendererReady);
-    if (!filePath) return;
+    // 再ロード後は watcherStates に watchedPath が残存しているためそちらを優先する
+    const state = watcherStates.get(win.webContents);
+    const fp = (state && state.watchedPath) || filePath;
+    if (!fp) return;
     try {
-      const text = fs.readFileSync(filePath, 'utf-8');
-      win.setTitle(`mdview — ${path.basename(filePath)}`);
-      win.webContents.send('file:opened', { path: filePath, text });
-      startWatching(win, filePath);
+      const text = fs.readFileSync(fp, 'utf-8');
+      win.setTitle(`mdview — ${path.basename(fp)}`);
+      win.webContents.send('file:opened', { path: fp, text });
+      startWatching(win, fp);
     } catch (e) {
       console.error('Failed to read file:', e);
     }
@@ -305,6 +307,7 @@ function createWindow(filePath, config) {
   ipcMain.on('renderer:ready', onRendererReady);
 
   win.on('closed', () => {
+    ipcMain.removeListener('renderer:ready', onRendererReady);
     stopWatching(wc);
   });
 
