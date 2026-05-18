@@ -39,7 +39,7 @@ pub fn render(
         };
         (
             format!(
-                " {}  {}/{}  {}%  {}  {}  [j/k]scroll [g/G]top/end [r]force-reload [q]quit",
+                " {}  {}/{}  {}%  {}  {}  [T/Ctrl-T]theme [o]open-link [j/k]scroll [g/G]top/end [r]force-reload [q]quit",
                 filename,
                 scroll + 1,
                 total,

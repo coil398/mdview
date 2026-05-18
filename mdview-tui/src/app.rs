@@ -1,5 +1,5 @@
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::Frame;
 use ratatui_textarea::TextArea;
@@ -19,6 +19,20 @@ use crate::types::StyledLine;
 use crate::ui::{notes as ui_notes, statusbar, toc, viewer};
 use crate::watcher::FileWatcher;
 
+/// テーマランタイム切替の循環リスト（前フェーズ phase.rs の定義順に揃える）。
+///
+/// **このリストを変更する場合は `mdview-tui/src/theme.rs` の `TuiTheme::from_id` の
+/// match 分岐も同時に更新すること。** また CLAUDE.md「テーマ機能メンテナンスガイド /
+/// 新規テーマを追加するときの手順」step 1 も参照。
+const THEME_CYCLE: &[&str] = &[
+    "vscode-dark",
+    "vscode-light",
+    "github-dark",
+    "github-light",
+    "solarized-dark",
+    "solarized-light",
+];
+
 pub struct App {
     pub filepath: PathBuf,
     pub lines: Vec<StyledLine>,
@@ -37,6 +51,8 @@ pub struct App {
     pub status_error: Option<(String, std::time::Instant)>,
     /// 現在適用中のテーマ。
     pub theme: TuiTheme,
+    /// `THEME_CYCLE` 配列における現在のテーマインデックス。
+    pub theme_index: usize,
 
     // ── メモ機能フィールド ──────────────────────────────────────────────
     /// 現在開いている文書の全見出しアンカー（GUI collectHeadingMeta 互換、List/BlockQuote 内も含む）。
@@ -71,6 +87,11 @@ impl App {
         let (tx, rx) = mpsc::channel();
         let watcher = FileWatcher::new(path.clone(), tx)?;
 
+        let theme_index = THEME_CYCLE
+            .iter()
+            .position(|&id| id == theme.id)
+            .unwrap_or(0);
+
         let mut app = App {
             filepath: path,
             lines: Vec::new(),
@@ -85,6 +106,7 @@ impl App {
             wrapped_line_count: 0,
             status_error: None,
             theme,
+            theme_index,
             // メモ機能フィールド初期化
             anchors: Vec::new(),
             anchor_block_indices: Vec::new(),
@@ -296,16 +318,36 @@ impl App {
                             }
                         }
 
-                        KeyCode::Char('t') => {
-                            self.toc_open = !self.toc_open;
-                            // TOC を開くときは Notes を閉じる（排他制御）
-                            if self.toc_open {
-                                // 編集中なら先に保存してから閉じる（plan.md Step E-1 対応）
-                                self.flush_note_edit_mode();
-                                self.notes_open = false;
+                        KeyCode::Char('T') => {
+                            // Shift+T: テーマを順方向に循環
+                            if let Err(e) = self.cycle_theme(true) {
+                                self.status_error = Some((
+                                    format!("theme error: {}", e),
+                                    std::time::Instant::now(),
+                                ));
                             }
-                            if self.toc_open && self.toc_sel >= self.toc.len() {
-                                self.toc_sel = 0;
+                        }
+
+                        KeyCode::Char('t') => {
+                            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                                // Ctrl+T: テーマを逆方向に循環
+                                if let Err(e) = self.cycle_theme(false) {
+                                    self.status_error = Some((
+                                        format!("theme error: {}", e),
+                                        std::time::Instant::now(),
+                                    ));
+                                }
+                            } else {
+                                self.toc_open = !self.toc_open;
+                                // TOC を開くときは Notes を閉じる（排他制御）
+                                if self.toc_open {
+                                    // 編集中なら先に保存してから閉じる（plan.md Step E-1 対応）
+                                    self.flush_note_edit_mode();
+                                    self.notes_open = false;
+                                }
+                                if self.toc_open && self.toc_sel >= self.toc.len() {
+                                    self.toc_sel = 0;
+                                }
                             }
                         }
 
@@ -361,6 +403,11 @@ impl App {
                                     self.load_textarea_for_current();
                                 }
                             }
+                        }
+
+                        KeyCode::Char('o') => {
+                            // スクロール最上行のリンクを外部ブラウザで開く
+                            self.open_focused_link();
                         }
 
                         _ => {}
@@ -549,11 +596,82 @@ impl App {
 
         Ok(())
     }
+
+    /// テーマを循環させる。`forward=true` で順方向、`false` で逆方向。
+    ///
+    /// 新テーマで Highlighter を再生成し、ドキュメントを再変換して描画データを更新する。
+    /// テーマ ID を config.json に永続化する。
+    fn cycle_theme(&mut self, forward: bool) -> anyhow::Result<()> {
+        let new_index = next_theme_index(self.theme_index, forward, THEME_CYCLE.len());
+        let new_theme = TuiTheme::from_id(THEME_CYCLE[new_index]);
+
+        let new_highlighter = Highlighter::with_syntect_theme(new_theme.syntect_theme)
+            .unwrap_or_else(|e| {
+                eprintln!("mdview: syntect theme load failed: {}. using default.", e);
+                Highlighter::new()
+            });
+
+        self.highlighter = Arc::new(new_highlighter);
+        self.theme = new_theme;
+        self.theme_index = new_index;
+
+        // 描画データを再構築
+        self.load()?;
+
+        // config.json に永続化（失敗は status_error に転写。非 blocking）
+        let mut cfg = crate::config::Config::load();
+        cfg.theme = self.theme.id.to_string();
+        if let Err(e) = cfg.save() {
+            self.status_error = Some((
+                format!("config save failed: {}", e),
+                std::time::Instant::now(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// スクロール最上行にあるリンクのうち最初の 1 個を外部ブラウザで開く。
+    ///
+    /// リンクが無い・URL が不正なら静かに no-op。
+    fn open_focused_link(&mut self) {
+        let url = self.lines.get(self.scroll).and_then(|line| {
+            line.iter()
+                .find(|span| span.url.is_some())
+                .and_then(|span| span.url.clone())
+        });
+
+        if let Some(u) = url {
+            if is_safe_url(&u) {
+                // JoinHandle を捨てることで TUI ループをブロックしない
+                let _ = open::that_in_background(u);
+            }
+        }
+    }
 }
 
 // ===========================================================================
 // ヘルパー関数
 // ===========================================================================
+
+/// テーマサイクルの次インデックスを計算する（純粋関数、テスト可能）。
+fn next_theme_index(current: usize, forward: bool, len: usize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    if forward {
+        (current + 1) % len
+    } else {
+        current.checked_sub(1).unwrap_or(len - 1)
+    }
+}
+
+/// URL スキーム検証（https / http / mailto のみ許可）。
+///
+/// javascript: / file: / data: 等の危険スキームを排除する。
+fn is_safe_url(url: &str) -> bool {
+    url.starts_with("https://") || url.starts_with("http://") || url.starts_with("mailto:")
+}
 
 /// 指定スクロール位置に対応する anchor を返す（モジュールレベル pure function）。
 ///
@@ -602,7 +720,7 @@ fn count_anchors_in_block(block: &Block) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{count_anchors_in_block, find_current_anchor_in};
+    use super::{count_anchors_in_block, find_current_anchor_in, is_safe_url, next_theme_index};
     use mdview_core::{AnchorKey, Block};
 
     fn make_anchor(text: &str, level: u8, occ: u32) -> AnchorKey {
@@ -725,5 +843,61 @@ mod tests {
     fn count_anchors_in_block_paragraph_is_0() {
         let block = Block::Paragraph { lines: vec![] };
         assert_eq!(count_anchors_in_block(&block), 0);
+    }
+
+    // =========================================================================
+    // Phase F4: is_safe_url のテスト
+    // =========================================================================
+
+    #[test]
+    fn is_safe_url_accepts_https() {
+        assert!(is_safe_url("https://example.com"));
+    }
+
+    #[test]
+    fn is_safe_url_accepts_http() {
+        assert!(is_safe_url("http://example.com"));
+    }
+
+    #[test]
+    fn is_safe_url_accepts_mailto() {
+        assert!(is_safe_url("mailto:x@y.z"));
+    }
+
+    #[test]
+    fn is_safe_url_rejects_javascript() {
+        assert!(!is_safe_url("javascript:alert(1)"));
+    }
+
+    #[test]
+    fn is_safe_url_rejects_file() {
+        assert!(!is_safe_url("file:///etc/passwd"));
+    }
+
+    // =========================================================================
+    // Phase F3: next_theme_index のテスト
+    // =========================================================================
+
+    #[test]
+    fn cycle_theme_forward_increments_index() {
+        // 6 テーマ: 0 → 1 → 2 → ... → 5 → 0（wrap）
+        assert_eq!(next_theme_index(0, true, 6), 1);
+        assert_eq!(next_theme_index(5, true, 6), 0); // wrap
+        assert_eq!(next_theme_index(3, true, 6), 4);
+    }
+
+    #[test]
+    fn cycle_theme_backward_decrements_index() {
+        // 逆方向: 0 → 5 (wrap), 3 → 2
+        assert_eq!(next_theme_index(0, false, 6), 5); // wrap
+        assert_eq!(next_theme_index(3, false, 6), 2);
+        assert_eq!(next_theme_index(1, false, 6), 0);
+    }
+
+    #[test]
+    fn cycle_theme_single_element() {
+        // 要素数 1 は常に 0
+        assert_eq!(next_theme_index(0, true, 1), 0);
+        assert_eq!(next_theme_index(0, false, 1), 0);
     }
 }

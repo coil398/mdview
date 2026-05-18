@@ -4,7 +4,7 @@
 //! 「block_index → 開始行 index」マップ（`block_starts`）を構築する。
 //! TOC ジャンプはこのマップを参照して `scroll = block_starts[entry.block_index]` で行う。
 
-use mdview_core::{Block, Cell, Document, ListItem, Span, SpanKind, TocEntry};
+use mdview_core::{Alignment, Block, Cell, Document, ListItem, Span, SpanKind, TocEntry};
 use ratatui::style::{Modifier, Style};
 use unicode_width::UnicodeWidthStr;
 
@@ -122,8 +122,8 @@ fn render_block(
         Block::Table {
             header,
             rows,
-            align: _,
-        } => render_table(header, rows, ctx, theme, indent, quote_depth),
+            align,
+        } => render_table(header, rows, align, ctx, theme, indent, quote_depth),
         Block::Rule => render_rule(ctx, theme, indent, quote_depth),
     }
 }
@@ -140,9 +140,14 @@ fn render_paragraph(
         push_indent(&mut line, indent);
         push_quote_prefix(&mut line, theme, quote_depth);
         for span in line_spans {
+            let url = match &span.kind {
+                SpanKind::Link { url } => Some(url.clone()),
+                _ => None,
+            };
             line.push(StyledSpan {
                 text: span.text.clone(),
                 style: span_kind_to_style(&span.kind, theme),
+                url,
             });
         }
         ctx.lines.push(line);
@@ -162,21 +167,23 @@ fn render_heading(
     line.push(StyledSpan {
         text: heading_prefix(level).to_string(),
         style,
+        url: None,
     });
     for span in spans {
         // 見出し内では「見出し色 + Span 由来の修飾子」を合成。
         // ただしリンクは特別扱い: 見出し色 + UNDERLINED で表現（URL は表示しない）
-        let span_style = match &span.kind {
-            SpanKind::Link { .. } => style.add_modifier(Modifier::UNDERLINED),
-            SpanKind::CodeInline => style.fg(theme.code_inline),
-            SpanKind::Bold => style.add_modifier(Modifier::BOLD),
-            SpanKind::Italic => style.add_modifier(Modifier::ITALIC),
-            SpanKind::BoldItalic => style.add_modifier(Modifier::BOLD | Modifier::ITALIC),
-            SpanKind::Normal => style,
+        let (span_style, url) = match &span.kind {
+            SpanKind::Link { url } => (style.add_modifier(Modifier::UNDERLINED), Some(url.clone())),
+            SpanKind::CodeInline => (style.fg(theme.code_inline), None),
+            SpanKind::Bold => (style.add_modifier(Modifier::BOLD), None),
+            SpanKind::Italic => (style.add_modifier(Modifier::ITALIC), None),
+            SpanKind::BoldItalic => (style.add_modifier(Modifier::BOLD | Modifier::ITALIC), None),
+            SpanKind::Normal => (style, None),
         };
         line.push(StyledSpan {
             text: span.text.clone(),
             style: span_style,
+            url,
         });
     }
     ctx.lines.push(line);
@@ -227,6 +234,7 @@ fn render_list(
             let bullet_span = StyledSpan {
                 text: bullet_text,
                 style: bullet_style,
+                url: None,
             };
             first_line.insert(insert_pos, bullet_span);
         }
@@ -278,6 +286,7 @@ fn render_code_block(
     badge_line.push(StyledSpan {
         text: badge_text,
         style: badge_style,
+        url: None,
     });
     ctx.lines.push(badge_line);
 
@@ -290,15 +299,18 @@ fn render_code_block(
         line.push(StyledSpan {
             text: "  ".to_string(),
             style: Style::default(),
+            url: None,
         });
         line.extend(hl_line);
         ctx.lines.push(line);
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_table(
     header: &[Cell],
     rows: &[Vec<Cell>],
+    align: &[Alignment],
     ctx: &mut RenderCtx,
     theme: &TuiTheme,
     indent: usize,
@@ -309,56 +321,177 @@ fn render_table(
         return;
     }
     let col_widths = compute_table_col_widths(header, rows);
-    let header_text: Vec<String> = header
-        .iter()
-        .map(cell_to_plain_text)
-        .enumerate()
-        .map(|(i, t)| pad_or_truncate(&t, col_widths[i]))
-        .collect();
     let separator: String = (0..cols)
         .map(|i| "─".repeat(col_widths[i]))
         .collect::<Vec<_>>()
         .join("─┼─");
 
-    let header_style = Style::default().add_modifier(Modifier::BOLD);
     let border_style = Style::default().fg(theme.table_border);
 
-    // ヘッダ行
+    // ヘッダ行（全 span に BOLD を合成）
     let mut header_line: StyledLine = Vec::new();
     push_indent(&mut header_line, indent);
     push_quote_prefix(&mut header_line, theme, quote_depth);
-    header_line.push(StyledSpan {
-        text: header_text.join(" │ "),
-        style: header_style,
-    });
+    for (i, (cell, &width)) in header.iter().zip(col_widths.iter()).enumerate() {
+        if i > 0 {
+            header_line.push(StyledSpan {
+                text: " │ ".to_string(),
+                style: border_style,
+                url: None,
+            });
+        }
+        let col_align = align.get(i).copied().unwrap_or(Alignment::Left);
+        let mut cell_spans = render_cell_to_spans(cell, width, col_align, theme);
+        // ヘッダは全 span に BOLD を合成
+        for s in &mut cell_spans {
+            s.style = s.style.add_modifier(Modifier::BOLD);
+        }
+        header_line.extend(cell_spans);
+    }
     ctx.lines.push(header_line);
 
-    // 区切り
+    // 区切り行
     let mut sep_line: StyledLine = Vec::new();
     push_indent(&mut sep_line, indent);
     push_quote_prefix(&mut sep_line, theme, quote_depth);
     sep_line.push(StyledSpan {
         text: separator.clone(),
         style: border_style,
+        url: None,
     });
     ctx.lines.push(sep_line);
 
-    // 各行
+    // データ行
+    let empty_cell = Cell { spans: vec![] };
     for row in rows {
-        let row_text: Vec<String> = (0..cols)
-            .map(|i| {
-                let t = row.get(i).map(cell_to_plain_text).unwrap_or_default();
-                pad_or_truncate(&t, col_widths[i])
-            })
-            .collect();
         let mut line: StyledLine = Vec::new();
         push_indent(&mut line, indent);
         push_quote_prefix(&mut line, theme, quote_depth);
-        line.push(StyledSpan {
-            text: row_text.join(" │ "),
-            style: Style::default(),
-        });
+        for (i, &width) in col_widths.iter().enumerate() {
+            if i > 0 {
+                line.push(StyledSpan {
+                    text: " │ ".to_string(),
+                    style: border_style,
+                    url: None,
+                });
+            }
+            let col_align = align.get(i).copied().unwrap_or(Alignment::Left);
+            let cell = row.get(i).unwrap_or(&empty_cell);
+            line.extend(render_cell_to_spans(cell, width, col_align, theme));
+        }
         ctx.lines.push(line);
+    }
+}
+
+/// セル内の Span をスタイル化し、幅にアラインして `Vec<StyledSpan>` を返す。
+///
+/// - 左 padding / 右 padding をアラインメントに応じて計算する。
+/// - 切り詰めが必要な場合は `width - 1` まで取り `…`（U+2026）を最後に付ける。
+fn render_cell_to_spans(
+    cell: &Cell,
+    width: usize,
+    align: Alignment,
+    theme: &TuiTheme,
+) -> Vec<StyledSpan> {
+    // まずセル内の全 span を連結した display width を計測する
+    let total_content_width: usize = cell
+        .spans
+        .iter()
+        .map(|s| UnicodeWidthStr::width(s.text.as_str()))
+        .sum();
+
+    if total_content_width <= width {
+        // パディングが必要なケース
+        let pad = width - total_content_width;
+        let (left_pad, right_pad) = match align {
+            Alignment::Right => (pad, 0usize),
+            Alignment::Center => {
+                let left = pad / 2;
+                let right = pad - left;
+                (left, right)
+            }
+            Alignment::Left | Alignment::None => (0usize, pad),
+        };
+
+        let mut result: Vec<StyledSpan> = Vec::new();
+        if left_pad > 0 {
+            result.push(StyledSpan {
+                text: " ".repeat(left_pad),
+                style: Style::default(),
+                url: None,
+            });
+        }
+        for span in &cell.spans {
+            let url = match &span.kind {
+                SpanKind::Link { url } => Some(url.clone()),
+                _ => None,
+            };
+            result.push(StyledSpan {
+                text: span.text.clone(),
+                style: span_kind_to_style(&span.kind, theme),
+                url,
+            });
+        }
+        if right_pad > 0 {
+            result.push(StyledSpan {
+                text: " ".repeat(right_pad),
+                style: Style::default(),
+                url: None,
+            });
+        }
+        result
+    } else {
+        // 切り詰めが必要なケース（width - 1 まで取り `…` を付ける）
+        let target_width = if width > 0 { width - 1 } else { 0 };
+        let mut result: Vec<StyledSpan> = Vec::new();
+        let mut acc = 0usize;
+        'outer: for span in &cell.spans {
+            let url = match &span.kind {
+                SpanKind::Link { url } => Some(url.clone()),
+                _ => None,
+            };
+            let span_style = span_kind_to_style(&span.kind, theme);
+            let mut span_text = String::new();
+            for ch in span.text.chars() {
+                let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+                if acc + cw > target_width {
+                    // このスパンのここまでを push して外に出る
+                    if !span_text.is_empty() {
+                        result.push(StyledSpan {
+                            text: span_text,
+                            style: span_style,
+                            url: url.clone(),
+                        });
+                    }
+                    break 'outer;
+                }
+                span_text.push(ch);
+                acc += cw;
+            }
+            if !span_text.is_empty() {
+                result.push(StyledSpan {
+                    text: span_text,
+                    style: span_style,
+                    url,
+                });
+            }
+        }
+        // 省略記号を末尾に付ける
+        result.push(StyledSpan {
+            text: "…".to_string(),
+            style: Style::default(),
+            url: None,
+        });
+        // width になるよう末尾パディング（`…` は width 1 なので acc + 1 と width の差を埋める）
+        let current = acc + 1; // `…` は幅 1
+        if current < width {
+            result.push(StyledSpan {
+                text: " ".repeat(width - current),
+                style: Style::default(),
+                url: None,
+            });
+        }
+        result
     }
 }
 
@@ -369,39 +502,6 @@ fn cell_to_plain_text(cell: &Cell) -> String {
         .collect::<String>()
 }
 
-/// display width ベースで文字列を指定幅にパディング or 切り詰める。
-/// - s.width() < width → 不足分をスペース埋め
-/// - s.width() > width → 先頭から width 以内に収まる文字だけ残す
-/// - s.width() == width → そのまま
-fn pad_or_truncate(s: &str, width: usize) -> String {
-    let current = UnicodeWidthStr::width(s);
-    if current == width {
-        return s.to_string();
-    }
-    if current < width {
-        let mut out = String::from(s);
-        for _ in 0..(width - current) {
-            out.push(' ');
-        }
-        return out;
-    }
-    // current > width: 文字単位で幅を積み上げて width を超えない範囲で切る
-    let mut out = String::new();
-    let mut acc = 0usize;
-    for ch in s.chars() {
-        let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-        if acc + w > width {
-            break;
-        }
-        out.push(ch);
-        acc += w;
-    }
-    // 切り詰めの結果 acc < width ならパディング（全角文字が width 境界で入らない場合）
-    for _ in 0..(width - acc) {
-        out.push(' ');
-    }
-    out
-}
 
 /// 各列の display width を、ヘッダと全行の最大値から決める（min/max でクランプ）。
 fn compute_table_col_widths(header: &[Cell], rows: &[Vec<Cell>]) -> Vec<usize> {
@@ -433,6 +533,7 @@ fn render_rule(ctx: &mut RenderCtx, theme: &TuiTheme, indent: usize, quote_depth
     line.push(StyledSpan {
         text: "─".repeat(60),
         style: Style::default().fg(theme.rule),
+        url: None,
     });
     ctx.lines.push(line);
 }
@@ -446,6 +547,7 @@ fn push_indent(line: &mut StyledLine, indent: usize) {
         line.push(StyledSpan {
             text: "  ".repeat(indent),
             style: Style::default(),
+            url: None,
         });
     }
 }
@@ -457,6 +559,7 @@ fn push_quote_prefix(line: &mut StyledLine, theme: &TuiTheme, quote_depth: usize
             style: Style::default()
                 .fg(theme.quote_prefix)
                 .add_modifier(Modifier::ITALIC),
+            url: None,
         });
     }
 }
@@ -484,6 +587,95 @@ mod tests {
 
     fn line_to_plain(line: &StyledLine) -> String {
         line.iter().map(|s| s.text.as_str()).collect::<String>()
+    }
+
+    /// display width ベースで文字列を指定幅にパディング or 切り詰める（テスト専用）。
+    fn pad_or_truncate(s: &str, width: usize) -> String {
+        let current = UnicodeWidthStr::width(s);
+        if current == width {
+            return s.to_string();
+        }
+        if current < width {
+            let mut out = String::from(s);
+            for _ in 0..(width - current) {
+                out.push(' ');
+            }
+            return out;
+        }
+        let mut out = String::new();
+        let mut acc = 0usize;
+        for ch in s.chars() {
+            let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            if acc + w > width {
+                break;
+            }
+            out.push(ch);
+            acc += w;
+        }
+        for _ in 0..(width - acc) {
+            out.push(' ');
+        }
+        out
+    }
+
+    /// アラインメントに応じて文字列を指定幅にパディング or 切り詰める。
+    /// `render_cell_to_spans` の純粋文字列版（幅計算テスト専用）。
+    fn pad_or_truncate_aligned(s: &str, width: usize, align: Alignment) -> String {
+        let current = UnicodeWidthStr::width(s);
+        if current >= width {
+            return pad_or_truncate(s, width);
+        }
+        let pad = width - current;
+        match align {
+            Alignment::Right => {
+                let mut out = " ".repeat(pad);
+                out.push_str(s);
+                out
+            }
+            Alignment::Center => {
+                let left = pad / 2;
+                let right = pad - left;
+                let mut out = " ".repeat(left);
+                out.push_str(s);
+                for _ in 0..right {
+                    out.push(' ');
+                }
+                out
+            }
+            Alignment::Left | Alignment::None => {
+                let mut out = String::from(s);
+                for _ in 0..pad {
+                    out.push(' ');
+                }
+                out
+            }
+        }
+    }
+
+    // =========================================================================
+    // pad_or_truncate_aligned 単体テスト
+    // =========================================================================
+
+    #[test]
+    fn pad_or_truncate_aligned_right_pads_left() {
+        assert_eq!(pad_or_truncate_aligned("a", 3, Alignment::Right), "  a");
+    }
+
+    #[test]
+    fn pad_or_truncate_aligned_left_pads_right() {
+        assert_eq!(pad_or_truncate_aligned("a", 3, Alignment::Left), "a  ");
+    }
+
+    #[test]
+    fn pad_or_truncate_aligned_center_pads_both() {
+        // 幅 4 に "a"（1幅）: left=1, right=2
+        assert_eq!(pad_or_truncate_aligned("a", 4, Alignment::Center), " a  ");
+    }
+
+    #[test]
+    fn pad_or_truncate_aligned_truncates_when_over_width() {
+        // "abc"（3幅）を 2 に切り詰め → "ab"
+        assert_eq!(pad_or_truncate_aligned("abc", 2, Alignment::Left), "ab");
     }
 
     #[test]
@@ -762,6 +954,162 @@ mod tests {
         assert_eq!(
             header_width, sep_width,
             "ヘッダ行と区切り行の display width が一致しない: header={header_width}, sep={sep_width}"
+        );
+    }
+
+    // =========================================================================
+    // Phase F1: Table 列アラインメントのテスト
+    // =========================================================================
+
+    #[test]
+    fn table_alignment_left_pads_right() {
+        // Left align: 内容 "a"（1幅）、列幅 = min 3 → "a  "（右に 2 スペース）
+        let out = render("| col |\n|:---|\n| a |\n");
+        let data_line = out
+            .lines
+            .iter()
+            .find(|l| line_to_plain(l).contains('a') && !line_to_plain(l).contains('─'))
+            .expect("データ行が見つからない");
+        // 先頭 span（indent/prefix を除いて最初のセルテキスト）が "a" で始まり右に空白が続く
+        let spans_text: String = data_line.iter().map(|s| s.text.as_str()).collect();
+        // TABLE_COL_MIN_WIDTH=3 のため内容幅 1 の列は必ず幅 3 になり "a  " が保証される
+        assert!(
+            spans_text.contains("a  "),
+            "Left align でセルの右に 2 スペースが付いていない: {:?}",
+            spans_text
+        );
+    }
+
+    #[test]
+    fn table_alignment_right_pads_left() {
+        // Right align: 内容 "a"（1幅）、列幅 = min 3 → "  a"（左に 2 スペース）
+        let out = render("| col |\n|---:|\n| a |\n");
+        let data_line = out
+            .lines
+            .iter()
+            .find(|l| line_to_plain(l).contains('a') && !line_to_plain(l).contains('─'))
+            .expect("データ行が見つからない");
+        // left_pad 用の StyledSpan が存在し、"  " を持つこと
+        let has_left_pad = data_line
+            .iter()
+            .any(|s| s.text.starts_with("  ") && s.url.is_none());
+        assert!(
+            has_left_pad,
+            "Right align でセルの左にスペースが付いていない: {:?}",
+            data_line
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn table_alignment_center_pads_both() {
+        // Center align: 内容 "a"（1幅）、列幅 = min 3 → 左 1 スペース + "a" + 右 1 スペース
+        let out = render("| col |\n|:---:|\n| a |\n");
+        let data_line = out
+            .lines
+            .iter()
+            .find(|l| line_to_plain(l).contains('a') && !line_to_plain(l).contains('─'))
+            .expect("データ行が見つからない");
+        let spans_text: String = data_line.iter().map(|s| s.text.as_str()).collect();
+        // " a " の形（左右にスペース）が含まれる
+        assert!(
+            spans_text.contains(" a "),
+            "Center align でセルの両側にスペースが付いていない: {:?}",
+            spans_text
+        );
+    }
+
+    #[test]
+    fn table_alignment_none_defaults_to_left() {
+        // None（区切りなし）は Left と同じ挙動
+        let out = render("| col |\n|---|\n| a |\n");
+        let data_line = out
+            .lines
+            .iter()
+            .find(|l| line_to_plain(l).contains('a') && !line_to_plain(l).contains('─'))
+            .expect("データ行が見つからない");
+        let spans_text: String = data_line.iter().map(|s| s.text.as_str()).collect();
+        // TABLE_COL_MIN_WIDTH=3 のため内容幅 1 の列は必ず幅 3 になり "a  " が保証される（Left fallback）
+        assert!(
+            spans_text.contains("a  "),
+            "None align で Left fallback でセルの右に 2 スペースが付いていない: {:?}",
+            spans_text
+        );
+    }
+
+    // =========================================================================
+    // Phase F2: テーブルセル内インライン書式のテスト
+    // =========================================================================
+
+    #[test]
+    fn table_cell_preserves_bold() {
+        // | **bold** | → セル内に BOLD modifier が付いた StyledSpan が存在する
+        let out = render("| col |\n|---|\n| **bold** |\n");
+        let data_line = out
+            .lines
+            .iter()
+            .find(|l| line_to_plain(l).contains("bold") && !line_to_plain(l).contains('─'))
+            .expect("データ行が見つからない");
+        let bold_span = data_line
+            .iter()
+            .find(|s| s.text.contains("bold") && s.style.add_modifier.contains(Modifier::BOLD));
+        assert!(
+            bold_span.is_some(),
+            "セル内 **bold** に BOLD modifier が付いていない。spans: {:?}",
+            data_line
+                .iter()
+                .map(|s| (s.text.as_str(), s.style.add_modifier))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn table_cell_preserves_link_url() {
+        // | [text](https://example.com) | → セル内に url: Some("https://example.com") を持つ span が存在する
+        let out = render("| col |\n|---|\n| [text](https://example.com) |\n");
+        let data_line = out
+            .lines
+            .iter()
+            .find(|l| line_to_plain(l).contains("text") && !line_to_plain(l).contains('─'))
+            .expect("データ行が見つからない");
+        let link_span = data_line
+            .iter()
+            .find(|s| s.url.as_deref() == Some("https://example.com"));
+        assert!(
+            link_span.is_some(),
+            "セル内リンクに url フィールドが設定されていない。spans: {:?}",
+            data_line
+                .iter()
+                .map(|s| (s.text.as_str(), s.url.as_deref()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn table_cell_truncates_with_ellipsis() {
+        // 50 文字を超えるセル → 末尾が `…` になる
+        let long = "a".repeat(50);
+        let out = render(&format!("| col |\n|---|\n| {} |\n", long));
+        let data_line = out
+            .lines
+            .iter()
+            .find(|l| line_to_plain(l).contains('a') && !line_to_plain(l).contains('─'))
+            .expect("データ行が見つからない");
+        let spans_text: String = data_line.iter().map(|s| s.text.as_str()).collect();
+        assert!(
+            spans_text.contains('…'),
+            "長いセルに省略記号 `…` が付いていない: {:?}",
+            spans_text
+        );
+        // 全体は MAX_WIDTH (40) 以内に収まっている
+        // (セルコンテンツ部分の幅はヘッダ "col" の 3 文字に合わせて clamp される)
+        let a_count = spans_text.chars().filter(|c| *c == 'a').count();
+        assert!(
+            a_count <= 40,
+            "セルが 40 文字以内にクランプされていない: a_count={}",
+            a_count
         );
     }
 }

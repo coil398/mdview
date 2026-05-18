@@ -149,7 +149,7 @@ mdview-electron/    # Electron GUI アプリ（WASM 経由で mdview-core を利
 
 #### 新規テーマを追加するときの手順
 
-1. **`mdview-tui/src/theme.rs`**: `TuiTheme::from_id` の `match` 分岐に `"new-theme-id" => Self::new_theme()` を追加し、`new_theme()` コンストラクタを実装する。`syntect_theme` フィールドには `ThemeSet::load_defaults()` の実測キー名を使うこと（下記確認方法を参照）
+1. **`mdview-tui/src/theme.rs`**: `TuiTheme::from_id` の `match` 分岐に `"new-theme-id" => Self::new_theme()` を追加し、`new_theme()` コンストラクタを実装する。`syntect_theme` フィールドには `ThemeSet::load_defaults()` の実測キー名を使うこと（下記確認方法を参照）。**合わせて `mdview-tui/src/app.rs` の `THEME_CYCLE` 定数にも同じ ID を追加すること**（`from_id` と `THEME_CYCLE` は独立した二箇所に ID リストが存在するため、片方だけ更新すると `T` キーのテーマ循環が壊れる）
 2. **`mdview-electron/renderer/renderer.js`**: `THEME_REGISTRY` に `'new-theme-id': { cssVars: {...}, hljsCss: 'vendor/themes/hljs/xxx.css', background: '#...' }` を追加する
 3. **`mdview-electron/main.js`**: `THEME_BACKGROUNDS` と `VALID_THEME_IDS` に追加し、テーマメニューの `themeSubmenu` に radio 項目を追加する
 4. **`mdview-electron/package.json`**: `copy:themes` スクリプトに対応する hljs CSS ファイル名を追加する（ただし公式 CDN 未収録テーマは自前 CSS を `git add -f` で直接 commit し `copy:themes` には含めない。詳細は下記「自前カスタム hljs CSS の追加手順」参照）

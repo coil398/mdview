@@ -100,6 +100,39 @@ impl Config {
         }
     }
 
+    /// デフォルトパス（`~/.config/mdview/config.json`）に atomic write する。
+    ///
+    /// 手順:
+    /// 1. 親ディレクトリを `create_dir_all`
+    /// 2. tmp ファイル（`.config.json.tmp-{pid}-{rand6}`）に書き込む
+    /// 3. `fs::rename` で本体ファイルに差し替える
+    pub fn save(&self) -> std::io::Result<()> {
+        let path = Self::config_path();
+        self.save_to_path(&path)
+    }
+
+    /// 任意パスに atomic write（テスト用に公開）。
+    pub fn save_to_path(&self, path: &PathBuf) -> std::io::Result<()> {
+        // 親ディレクトリを取得。ルート直下等で parent が None の場合はエラー
+        let parent = path.parent().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no parent")
+        })?;
+        std::fs::create_dir_all(parent)?;
+
+        // tmp ファイル名
+        let suffix = crate::notes::random_suffix();
+        let tmp_name = format!(".config.json.tmp-{}-{}", std::process::id(), suffix);
+        let tmp_path = parent.join(&tmp_name);
+
+        // JSON シリアライズ（2 スペースインデント。notes.rs と同じ形式）
+        let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
+
+        std::fs::write(&tmp_path, json)?;
+        std::fs::rename(&tmp_path, path)?;
+
+        Ok(())
+    }
+
     /// `~/.config/mdview/config.json` を XDG 準拠で解決する。
     pub fn config_path() -> PathBuf {
         // 1. $XDG_CONFIG_HOME
@@ -190,5 +223,67 @@ mod tests {
         );
         let cfg = Config::load_from_path(&f.path().to_path_buf());
         assert!(!cfg.notes.panel_open);
+    }
+
+    // =========================================================================
+    // Phase F3: save / save_to_path のテスト
+    // =========================================================================
+
+    #[test]
+    fn save_and_load_roundtrip() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.json");
+
+        let cfg = Config {
+            schema_version: 2,
+            theme: "github-dark".to_string(),
+            notes: NotesConfig { panel_open: false },
+        };
+        cfg.save_to_path(&path).unwrap();
+
+        let loaded = Config::load_from_path(&path);
+        assert_eq!(loaded.schema_version, 2);
+        assert_eq!(loaded.theme, "github-dark");
+        assert!(!loaded.notes.panel_open);
+    }
+
+    #[test]
+    fn save_uses_atomic_rename() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.json");
+
+        let cfg = Config::default();
+        cfg.save_to_path(&path).unwrap();
+
+        // tmp ファイルが残っていないこと
+        let tmp_files: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with(".config.json.tmp-")
+            })
+            .collect();
+        assert!(
+            tmp_files.is_empty(),
+            "tmp ファイルが残っています: {:?}",
+            tmp_files
+        );
+
+        // 本体ファイルは存在する
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn save_creates_parent_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        // 存在しないサブディレクトリに保存
+        let path = dir.path().join("subdir").join("config.json");
+        assert!(!path.parent().unwrap().exists());
+
+        let cfg = Config::default();
+        cfg.save_to_path(&path).unwrap();
+        assert!(path.exists());
     }
 }

@@ -69,6 +69,7 @@ mod tests {
         StyledSpan {
             text: text.to_string(),
             style: Style::default(),
+            url: None,
         }
     }
 
@@ -112,10 +113,12 @@ mod tests {
         let party_line = vec![StyledSpan {
             text: "🎉    │ party ".to_string(),
             style: Style::default(),
+            url: None,
         }];
         let rocket_line = vec![StyledSpan {
             text: "🚀    │ rocket".to_string(),
             style: Style::default(),
+            url: None,
         }];
 
         // ターミナル幅 30 でテスト

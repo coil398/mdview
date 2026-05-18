@@ -76,6 +76,7 @@ impl Highlighter {
                     styled_line.push(StyledSpan {
                         text: text.to_string(),
                         style: syntect_style_to_ratatui(*style),
+                        url: None,
                     });
                 }
             }

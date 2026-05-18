@@ -145,18 +145,16 @@ pub fn save(store: &NotesStore) -> std::io::Result<()> {
 
 /// 任意パスに atomic write（テスト用に公開）。
 pub fn save_to_path(store: &NotesStore, path: &PathBuf) -> std::io::Result<()> {
-    // 親ディレクトリを作成
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
+    // 親ディレクトリを取得。ルート直下等で parent が None の場合はエラー
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no parent")
+    })?;
+    std::fs::create_dir_all(parent)?;
 
     // tmp ファイル名
     let suffix = random_suffix();
     let tmp_name = format!(".notes.json.tmp-{}-{}", std::process::id(), suffix);
-    let tmp_path = path
-        .parent()
-        .map(|p| p.join(&tmp_name))
-        .unwrap_or_else(|| PathBuf::from(&tmp_name));
+    let tmp_path = parent.join(&tmp_name);
 
     // JSON シリアライズ（2 スペースインデント。GUI 側 JSON.stringify(_, null, 2) と揃える）
     let json = serde_json::to_string_pretty(store).map_err(std::io::Error::other)?;
@@ -169,7 +167,7 @@ pub fn save_to_path(store: &NotesStore, path: &PathBuf) -> std::io::Result<()> {
 
 /// `SystemTime::now()` を使って 6 文字のランダムサフィックスを生成する。
 /// `rand` クレート不要で外部依存を増やさない実装。
-fn random_suffix() -> String {
+pub(crate) fn random_suffix() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
