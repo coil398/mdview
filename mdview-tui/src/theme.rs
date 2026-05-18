@@ -39,6 +39,16 @@ pub struct TuiTheme {
     pub statusbar_error_bg: Color,
     pub toc_highlight_fg: Color,
     pub toc_highlight_bg: Color,
+
+    // ── 検索ハイライト ────────────────────────────────
+    /// 検索マッチ（hlsearch 相当）の前景色。
+    pub search_match_fg: Color,
+    /// 検索マッチ（hlsearch 相当）の背景色。
+    pub search_match_bg: Color,
+    /// 現在カーソル位置のマッチの前景色。
+    pub search_current_fg: Color,
+    /// 現在カーソル位置のマッチの背景色。
+    pub search_current_bg: Color,
 }
 
 impl TuiTheme {
@@ -70,6 +80,12 @@ impl TuiTheme {
 
             toc_highlight_fg: Color::Black,
             toc_highlight_bg: Color::Rgb(86, 156, 214), // #569cd6
+
+            // 検索ハイライト（WCAG AA 確認済み: 5.73:1 / 5.19:1）
+            search_match_fg: Color::Rgb(212, 212, 212), // #D4D4D4
+            search_match_bg: Color::Rgb(38, 79, 120),   // #264F78
+            search_current_fg: Color::Rgb(30, 30, 30),  // #1E1E1E
+            search_current_bg: Color::Rgb(181, 137, 0), // #B58900 yellow
         }
     }
 
@@ -101,6 +117,13 @@ impl TuiTheme {
 
             toc_highlight_fg: Color::White,
             toc_highlight_bg: Color::Rgb(0, 112, 192), // #0070c0
+
+            // 検索ハイライト（WCAG AA 確認済み: 10.99:1 / 5.07:1）
+            // search_current_bg は #D7720E 3.33 FAIL → #BF4800 5.07 PASSに調整
+            search_match_fg: Color::Rgb(30, 30, 30), // #1E1E1E
+            search_match_bg: Color::Rgb(173, 214, 255), // #ADD6FF
+            search_current_fg: Color::Rgb(255, 255, 255), // #FFFFFF
+            search_current_bg: Color::Rgb(191, 72, 0), // #BF4800 adjusted for WCAG AA
         }
     }
 
@@ -132,6 +155,12 @@ impl TuiTheme {
 
             toc_highlight_fg: Color::Black,
             toc_highlight_bg: Color::Rgb(88, 166, 255), // #58a6ff
+
+            // 検索ハイライト（WCAG AA 確認済み: 7.49:1 / 5.59:1）
+            search_match_fg: Color::Rgb(201, 209, 217), // #C9D1D9
+            search_match_bg: Color::Rgb(28, 58, 94),    // #1C3A5E
+            search_current_fg: Color::Rgb(13, 17, 23),  // #0D1117
+            search_current_bg: Color::Rgb(187, 128, 9), // #BB8009 yellow
         }
     }
 
@@ -163,6 +192,12 @@ impl TuiTheme {
 
             toc_highlight_fg: Color::White,
             toc_highlight_bg: Color::Rgb(0, 92, 197), // #005cc5
+
+            // 検索ハイライト（WCAG AA 確認済み: 12.36:1 / 4.87:1）
+            search_match_fg: Color::Rgb(36, 41, 47), // #24292F
+            search_match_bg: Color::Rgb(250, 234, 205), // #FAEACD
+            search_current_fg: Color::Rgb(255, 255, 255), // #FFFFFF
+            search_current_bg: Color::Rgb(154, 103, 0), // #9A6700 amber
         }
     }
 
@@ -196,6 +231,12 @@ impl TuiTheme {
 
             toc_highlight_fg: Color::Rgb(0, 43, 54), // #002b36 base03
             toc_highlight_bg: Color::Rgb(181, 137, 0), // #b58900 yellow
+
+            // 検索ハイライト（WCAG AA 確認済み: 4.86:1 / 4.68:1）
+            search_match_fg: Color::Rgb(147, 161, 161), // #93A1A1 base1
+            search_match_bg: Color::Rgb(7, 54, 66),     // #073642 base02
+            search_current_fg: Color::Rgb(0, 43, 54),   // #002B36 base03
+            search_current_bg: Color::Rgb(181, 137, 0), // #B58900 yellow
         }
     }
 
@@ -228,6 +269,14 @@ impl TuiTheme {
 
             toc_highlight_fg: Color::Rgb(253, 246, 227), // #fdf6e3 base3
             toc_highlight_bg: Color::Rgb(88, 110, 117), // #586e75 base01 (5.11:1 vs #fdf6e3 — WCAG AA)
+
+            // 検索ハイライト（WCAG AA 確認済み: 6.47:1 / 6.04:1）
+            // search_match_fg: #586E75 3.91 FAIL → #3A5560 6.47 PASS に調整
+            // search_current_bg: #9A7000 4.15 FAIL → #7A5800 6.04 PASS に調整
+            search_match_fg: Color::Rgb(58, 85, 96), // #3A5560 adjusted for WCAG AA
+            search_match_bg: Color::Rgb(238, 232, 213), // #EEE8D5 base2
+            search_current_fg: Color::Rgb(253, 246, 227), // #FDF6E3 base3
+            search_current_bg: Color::Rgb(122, 88, 0), // #7A5800 adjusted for WCAG AA
         }
     }
 

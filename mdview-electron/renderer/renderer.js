@@ -24,6 +24,12 @@ let tocWidth = TOC_WIDTH_DEFAULT;
 let notesWidth = NOTES_WIDTH_DEFAULT;
 let layoutSaveTimer = null;
 
+// ── 検索機能の状態 ────────────────────────────────────────────────────────
+
+let searchMatches = [];              // span.search-match 要素の配列
+let searchCursor = 0;               // 現在のマッチ index
+let searchQuery = '';               // 現在の検索クエリ
+
 // ── メモ機能の状態 ────────────────────────────────────────────────────────
 
 let notesOpen = true;                // 右パネル開閉（config.notes.panel_open と同期）
@@ -55,6 +61,11 @@ const THEME_REGISTRY = {
       '--green': '#6a9955',
       '--mauve': '#ce9178',
       '--red': '#f44747',
+      // 検索ハイライト（WCAG AA 確認済み: 5.73:1 / 5.19:1）
+      '--search-bg': '#264f78',
+      '--search-fg': '#d4d4d4',
+      '--search-current-bg': '#b58900',
+      '--search-current-fg': '#1e1e1e',
     },
     hljsCss: 'vendor/themes/hljs/vs2015.css',
     background: '#1e1e1e',
@@ -72,6 +83,12 @@ const THEME_REGISTRY = {
       '--green': '#267f00',
       '--mauve': '#a31515',
       '--red': '#cd3131',
+      // 検索ハイライト（WCAG AA 確認済み: 10.99:1 / 5.07:1）
+      // search_current_bg: #d7720e 3.33 FAIL → #bf4800 5.07 PASS に調整
+      '--search-bg': '#add6ff',
+      '--search-fg': '#1e1e1e',
+      '--search-current-bg': '#bf4800',
+      '--search-current-fg': '#ffffff',
     },
     hljsCss: 'vendor/themes/hljs/vs.css',
     background: '#ffffff',
@@ -89,6 +106,11 @@ const THEME_REGISTRY = {
       '--green': '#3fb950',
       '--mauve': '#d2a8ff',
       '--red': '#ff7b72',
+      // 検索ハイライト（WCAG AA 確認済み: 7.49:1 / 5.59:1）
+      '--search-bg': '#1c3a5e',
+      '--search-fg': '#c9d1d9',
+      '--search-current-bg': '#bb8009',
+      '--search-current-fg': '#0d1117',
     },
     hljsCss: 'vendor/themes/hljs/github-dark.css',
     background: '#0d1117',
@@ -106,6 +128,11 @@ const THEME_REGISTRY = {
       '--green': '#28a745',
       '--mauve': '#6f42c1',
       '--red': '#d73a49',
+      // 検索ハイライト（WCAG AA 確認済み: 12.36:1 / 4.87:1）
+      '--search-bg': '#faeacd',
+      '--search-fg': '#24292f',
+      '--search-current-bg': '#9a6700',
+      '--search-current-fg': '#ffffff',
     },
     hljsCss: 'vendor/themes/hljs/github.css',
     background: '#ffffff',
@@ -123,6 +150,11 @@ const THEME_REGISTRY = {
       '--green': '#859900',
       '--mauve': '#6c71c4',
       '--red': '#dc322f',
+      // 検索ハイライト（WCAG AA 確認済み: 4.86:1 / 4.68:1）
+      '--search-bg': '#073642',
+      '--search-fg': '#93a1a1',
+      '--search-current-bg': '#b58900',
+      '--search-current-fg': '#002b36',
     },
     hljsCss: 'vendor/themes/hljs/solarized-dark.css',
     background: '#002b36',
@@ -140,6 +172,13 @@ const THEME_REGISTRY = {
       '--green': '#859900',
       '--mauve': '#6c71c4',
       '--red': '#dc322f',
+      // 検索ハイライト（WCAG AA 確認済み: 6.47:1 / 6.04:1）
+      // search_fg: #586e75 3.91 FAIL → #3a5560 6.47 PASS に調整
+      // search_current_bg: #9a7000 4.15 FAIL → #7a5800 6.04 PASS に調整
+      '--search-bg': '#eee8d5',
+      '--search-fg': '#3a5560',
+      '--search-current-bg': '#7a5800',
+      '--search-current-fg': '#fdf6e3',
     },
     hljsCss: 'vendor/themes/hljs/solarized-light.css',
     background: '#fdf6e3',
@@ -844,10 +883,225 @@ function scrollToHeading(idx) {
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+// ── 検索機能 ─────────────────────────────────────────────────────────────
+
+/**
+ * smartcase 判定: クエリに大文字が含まれる場合は case-sensitive。
+ */
+function isSmartcaseSensitive(pattern) {
+  return /[A-Z]/.test(pattern);
+}
+
+/**
+ * 検索クエリから RegExp を構築する。
+ * 不正な正規表現の場合は null を返す（例外を外に伝播させない）。
+ */
+function buildSearchRegex(pattern) {
+  const flags = isSmartcaseSensitive(pattern) ? 'g' : 'gi';
+  try {
+    return new RegExp(pattern, flags);
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * 既存の検索ハイライト span を全て unwrap し、テキストノードを正規化する。
+ */
+function clearSearchHighlights() {
+  const body = document.getElementById('markdown-body');
+  if (!body) return;
+  const marks = body.querySelectorAll('span.search-match');
+  for (const mark of marks) {
+    // span の子ノードを親に移動してから span を削除（unwrap）
+    const parent = mark.parentNode;
+    if (!parent) continue;
+    while (mark.firstChild) {
+      parent.insertBefore(mark.firstChild, mark);
+    }
+    parent.removeChild(mark);
+  }
+  // テキストノードの断片化を解消
+  body.normalize();
+  searchMatches = [];
+  const countEl = document.getElementById('search-count');
+  if (countEl) countEl.textContent = '';
+}
+
+/**
+ * `#markdown-body` 配下のテキストノードを TreeWalker で走査し、
+ * クエリにマッチする箇所を `<span class="search-match">` で wrap する。
+ */
+function runSearch(query) {
+  clearSearchHighlights();
+  searchCursor = 0;
+
+  if (!query) {
+    updateSearchHighlightState();
+    return;
+  }
+
+  const re = buildSearchRegex(query);
+  const inputEl = document.getElementById('search-input');
+
+  if (!re) {
+    // 不正な正規表現: input に .invalid class を付与
+    if (inputEl) inputEl.classList.add('invalid');
+    const countEl = document.getElementById('search-count');
+    if (countEl) countEl.textContent = '';
+    return;
+  }
+
+  // 正規表現が有効: .invalid を除去
+  if (inputEl) inputEl.classList.remove('invalid');
+
+  const body = document.getElementById('markdown-body');
+  if (!body) return;
+
+  // TreeWalker でテキストノードを走査
+  const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, null);
+  const textNodes = [];
+  let node;
+  while ((node = walker.nextNode())) {
+    textNodes.push(node);
+  }
+
+  // 各テキストノードでマッチを検索して span で wrap
+  for (const textNode of textNodes) {
+    const text = textNode.nodeValue;
+    if (!text) continue;
+
+    re.lastIndex = 0;
+    const matches = [];
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      matches.push({ start: m.index, end: m.index + m[0].length });
+      if (m[0].length === 0) re.lastIndex++; // ゼロ幅マッチで無限ループ回避
+    }
+
+    if (matches.length === 0) continue;
+
+    // マッチ箇所を分割して span で wrap する
+    const parent = textNode.parentNode;
+    if (!parent) continue;
+
+    // フラグメントに分割して挿入
+    let lastIndex = 0;
+    const fragment = document.createDocumentFragment();
+    for (const { start, end } of matches) {
+      // マッチ前のテキスト
+      if (start > lastIndex) {
+        fragment.appendChild(document.createTextNode(text.slice(lastIndex, start)));
+      }
+      // マッチ部分を span で wrap
+      const span = document.createElement('span');
+      span.className = 'search-match';
+      span.textContent = text.slice(start, end);
+      fragment.appendChild(span);
+      searchMatches.push(span);
+      lastIndex = end;
+    }
+    // マッチ後の残りテキスト
+    if (lastIndex < text.length) {
+      fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
+    }
+
+    parent.replaceChild(fragment, textNode);
+  }
+
+  updateSearchHighlightState();
+}
+
+/**
+ * 全マッチから `search-current` class を外し、現在のカーソル位置にのみ付与する。
+ * `#search-count` のテキストも更新する。
+ */
+function updateSearchHighlightState() {
+  for (const el of searchMatches) {
+    el.classList.remove('search-current');
+  }
+  if (searchMatches.length > 0 && searchMatches[searchCursor]) {
+    searchMatches[searchCursor].classList.add('search-current');
+  }
+  const countEl = document.getElementById('search-count');
+  if (countEl) {
+    countEl.textContent = searchMatches.length > 0
+      ? `${searchCursor + 1}/${searchMatches.length}`
+      : '0/0';
+  }
+}
+
+/**
+ * 現在カーソル位置のマッチ要素へスムーズスクロールする。
+ */
+function scrollToCurrentMatch() {
+  const el = searchMatches[searchCursor];
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+}
+
+/**
+ * 次のマッチへ移動する。
+ */
+function nextMatch() {
+  if (searchMatches.length === 0) return;
+  searchCursor = (searchCursor + 1) % searchMatches.length;
+  updateSearchHighlightState();
+  scrollToCurrentMatch();
+}
+
+/**
+ * 前のマッチへ移動する。
+ */
+function prevMatch() {
+  if (searchMatches.length === 0) return;
+  searchCursor = (searchCursor + searchMatches.length - 1) % searchMatches.length;
+  updateSearchHighlightState();
+  scrollToCurrentMatch();
+}
+
+/**
+ * 検索バーを開き、入力欄にフォーカスする。
+ */
+function openSearchBar() {
+  const bar = document.getElementById('search-bar');
+  if (bar) bar.removeAttribute('hidden');
+  document.body.classList.add('search-open');
+  const input = document.getElementById('search-input');
+  if (input) {
+    input.focus();
+    input.select();
+  }
+}
+
+/**
+ * 検索バーを閉じ、ハイライトをクリアして本文にフォーカスを戻す。
+ */
+function closeSearchBar() {
+  const bar = document.getElementById('search-bar');
+  if (bar) bar.setAttribute('hidden', '');
+  document.body.classList.remove('search-open');
+  clearSearchHighlights();
+  searchQuery = '';
+  const countEl = document.getElementById('search-count');
+  if (countEl) countEl.textContent = '';
+  // 本文へフォーカスを戻す
+  const content = document.getElementById('content');
+  if (content) content.focus();
+}
+
 // ── キーボードハンドラ ────────────────────────────────────────────────────
 
 // キーボード操作ハンドラ
 function handleKeyDown(e) {
+  // Cmd/Ctrl+F: 検索バーを開く（input フォーカス中・メニュー accelerator check より前に置く）
+  if ((e.metaKey || e.ctrlKey) && (e.key === 'f' || e.key === 'F')) {
+    e.preventDefault();
+    openSearchBar();
+    return;
+  }
+
   // <input> / <textarea> / contenteditable フォーカス中は無視
   const tag = e.target.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
@@ -1104,6 +1358,9 @@ async function renderMarkdown(text) {
     });
   }
 
+  // DOM 再構築後に stale な searchMatches 参照を除去（reload/ファイル切替後の count 誤表示防止）
+  clearSearchHighlights();
+
   updateStatusBar();
 }
 
@@ -1251,6 +1508,50 @@ async function main() {
   document.addEventListener('keydown', handleKeyDown);
   // 初期フォーカスハイライトを適用
   applyFocus();
+
+  // 検索バーのリスナー登録（初期化 1 回のみ）
+  const searchInput = document.getElementById('search-input');
+  if (searchInput) {
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        // incremental search 済みなので cursor を進めてジャンプ
+        if (searchMatches.length > 0) {
+          nextMatch();
+        } else {
+          // 初回 Enter: まだ runSearch していない場合に備えて実行
+          runSearch(searchInput.value);
+          scrollToCurrentMatch();
+        }
+      } else if (e.key === 'Enter' && e.shiftKey) {
+        e.preventDefault();
+        prevMatch();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closeSearchBar();
+      }
+    });
+    // incremental search: 入力のたびに runSearch を実行
+    searchInput.addEventListener('input', (e) => {
+      searchQuery = e.target.value;
+      runSearch(searchQuery);
+    });
+  }
+
+  const searchPrevBtn = document.getElementById('search-prev');
+  if (searchPrevBtn) {
+    searchPrevBtn.addEventListener('click', () => prevMatch());
+  }
+
+  const searchNextBtn = document.getElementById('search-next');
+  if (searchNextBtn) {
+    searchNextBtn.addEventListener('click', () => nextMatch());
+  }
+
+  const searchCloseBtn = document.getElementById('search-close');
+  if (searchCloseBtn) {
+    searchCloseBtn.addEventListener('click', () => closeSearchBar());
+  }
 
   // textarea のリスナー
   const notesTa = document.getElementById('notes-textarea');

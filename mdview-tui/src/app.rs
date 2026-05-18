@@ -13,6 +13,7 @@ use mdview_core::{AnchorKey, Block, TocEntry};
 
 use crate::highlighter::Highlighter;
 use crate::notes;
+use crate::search::{self, SearchMatch};
 use crate::style::{convert_document, StyledOutput};
 use crate::theme::TuiTheme;
 use crate::types::StyledLine;
@@ -74,6 +75,18 @@ pub struct App {
     pub current_anchor: Option<AnchorKey>,
     /// ratatui-textarea 編集バッファ。Insert モード時のみ意味を持つ。
     pub notes_textarea: TextArea<'static>,
+
+    // ── 検索機能フィールド ──────────────────────────────────────────────
+    /// コマンドライン検索入力中フラグ（`/` または `Ctrl+F` 入力中）。
+    pub search_mode: bool,
+    /// 確定済みの検索クエリ（`n`/`N` ジャンプの対象）。
+    pub search_query: String,
+    /// 入力中のバッファ（`search_mode` 中に編集、Enter で `search_query` に確定）。
+    pub search_input: String,
+    /// 確定クエリのマッチ全件。
+    pub search_matches: Vec<SearchMatch>,
+    /// 現在フォーカス中のマッチ index（`search_matches` 内）。
+    pub search_cursor: usize,
 }
 
 impl App {
@@ -116,6 +129,12 @@ impl App {
             notes_store: notes::load(),
             current_anchor: None,
             notes_textarea: TextArea::default(),
+            // 検索機能フィールド初期化
+            search_mode: false,
+            search_query: String::new(),
+            search_input: String::new(),
+            search_matches: Vec::new(),
+            search_cursor: 0,
         };
 
         app.load()?;
@@ -177,6 +196,26 @@ impl App {
 
         // ロード後に current_anchor を更新
         self.refresh_current_anchor();
+
+        // 確定クエリがある場合は DOM 再構築後にマッチを再計算する
+        if !self.search_query.is_empty() {
+            match search::find_matches(&self.lines, &self.search_query) {
+                Ok(matches) => {
+                    self.search_matches = matches;
+                    // カーソルが範囲外にならないようクランプ
+                    if !self.search_matches.is_empty() {
+                        self.search_cursor = self.search_cursor.min(self.search_matches.len() - 1);
+                    } else {
+                        self.search_cursor = 0;
+                    }
+                }
+                Err(_) => {
+                    self.search_matches.clear();
+                    self.search_cursor = 0;
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -229,6 +268,27 @@ impl App {
             if event::poll(Duration::from_millis(50))? {
                 if let Event::Key(key) = event::read()? {
                     if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
+
+                    // 検索モード中は検索入力キーのみ処理（notes_edit_mode より前に置く）
+                    if self.search_mode {
+                        let max_scroll_for_search = if self.wrapped_line_count > 0 {
+                            self.wrapped_line_count.saturating_sub(content_height)
+                        } else {
+                            self.lines.len().saturating_sub(content_height)
+                        };
+                        match key.code {
+                            KeyCode::Esc => self.cancel_search(),
+                            KeyCode::Enter => self.confirm_search(max_scroll_for_search),
+                            KeyCode::Backspace => {
+                                self.search_input.pop();
+                            }
+                            KeyCode::Char(c) => {
+                                self.search_input.push(c);
+                            }
+                            _ => {}
+                        }
                         continue;
                     }
 
@@ -351,9 +411,27 @@ impl App {
                             }
                         }
 
+                        KeyCode::Char('/') => {
+                            self.start_search();
+                        }
+
+                        KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            // Ctrl+F: 検索開始（`/` と同等）。f 単独キーは _ アームで無処理。
+                            self.start_search();
+                        }
                         KeyCode::Char('n') => {
+                            // TUI-7: `n` を検索次マッチに割り当て（メモトグルは `m` に移設）
+                            self.next_match(max_scroll);
+                        }
+
+                        KeyCode::Char('N') => {
+                            self.prev_match(max_scroll);
+                        }
+
+                        KeyCode::Char('m') => {
+                            // TUI-7: メモパネルトグル（`n` から移設）
                             if self.notes_open {
-                                // 編集中なら先に保存してから閉じる（plan.md Step E-1 対応）
+                                // 編集中なら先に保存してから閉じる
                                 self.flush_note_edit_mode();
                                 // パネルを閉じる
                                 self.notes_open = false;
@@ -480,7 +558,15 @@ impl App {
         }
 
         // ビューア描画（wrap 後行数を返す）
-        let wrapped_line_count = viewer::render(frame, viewer_area, &self.lines, self.scroll);
+        let wrapped_line_count = viewer::render(
+            frame,
+            viewer_area,
+            &self.lines,
+            self.scroll,
+            &self.search_matches,
+            self.search_cursor,
+            &self.theme,
+        );
 
         // ステータスバー描画
         statusbar::render(
@@ -494,6 +580,11 @@ impl App {
             self.notes_edit_mode,
             self.status_error.as_ref().map(|(m, _)| m.as_str()),
             &self.theme,
+            self.search_mode,
+            &self.search_input,
+            &self.search_query,
+            self.search_matches.len(),
+            self.search_cursor,
         );
 
         wrapped_line_count
@@ -595,6 +686,91 @@ impl App {
         notes::save(&self.notes_store).map_err(|e| anyhow::anyhow!("notes save failed: {}", e))?;
 
         Ok(())
+    }
+
+    // =========================================================================
+    // 検索機能ヘルパーメソッド
+    // =========================================================================
+
+    /// 検索モードを開始する。
+    ///
+    /// メモ編集モードが有効な場合は先に確定させる（モード排他）。
+    fn start_search(&mut self) {
+        // メモ編集モードが有効なら先に保存して終了（モード排他）
+        self.flush_note_edit_mode();
+        self.search_mode = true;
+        self.search_input.clear();
+    }
+
+    /// 検索入力を確定し、マッチへジャンプする。
+    ///
+    /// 不正な正規表現の場合は `status_error` に 5 秒表示し、マッチをクリアする。
+    /// 成功時は `search_cursor = 0` で先頭マッチへスクロールする。
+    fn confirm_search(&mut self, max_scroll: usize) {
+        self.search_mode = false;
+        self.search_query = self.search_input.clone();
+
+        if self.search_query.is_empty() {
+            self.search_matches.clear();
+            self.search_cursor = 0;
+            return;
+        }
+
+        match search::find_matches(&self.lines, &self.search_query) {
+            Ok(matches) => {
+                self.search_matches = matches;
+                self.search_cursor = 0;
+                if !self.search_matches.is_empty() {
+                    self.jump_to_match(max_scroll);
+                }
+            }
+            Err(e) => {
+                self.status_error =
+                    Some((format!("invalid regex: {}", e), std::time::Instant::now()));
+                self.search_matches.clear();
+                self.search_cursor = 0;
+            }
+        }
+    }
+
+    /// 検索をキャンセルする（Esc）。
+    ///
+    /// `search_query` / `search_matches` をクリアする（vim の `nohlsearch` 相当）。
+    fn cancel_search(&mut self) {
+        self.search_mode = false;
+        self.search_input.clear();
+        self.search_query.clear();
+        self.search_matches.clear();
+        self.search_cursor = 0;
+    }
+
+    /// 次のマッチへ移動する（`n` キー相当）。
+    fn next_match(&mut self, max_scroll: usize) {
+        if self.search_matches.is_empty() {
+            return;
+        }
+        let len = self.search_matches.len();
+        self.search_cursor = (self.search_cursor + 1) % len;
+        self.jump_to_match(max_scroll);
+    }
+
+    /// 前のマッチへ移動する（`N` キー相当）。
+    fn prev_match(&mut self, max_scroll: usize) {
+        if self.search_matches.is_empty() {
+            return;
+        }
+        let len = self.search_matches.len();
+        self.search_cursor = (self.search_cursor + len - 1) % len;
+        self.jump_to_match(max_scroll);
+    }
+
+    /// 現在の `search_cursor` が指すマッチ行へスクロールする。
+    ///
+    /// TOC ジャンプ（app.rs の `block_starts[entry.block_index].min(max_scroll)`）と同パターン。
+    fn jump_to_match(&mut self, max_scroll: usize) {
+        if let Some(m) = self.search_matches.get(self.search_cursor) {
+            self.scroll = m.line.min(max_scroll);
+        }
     }
 
     /// テーマを循環させる。`forward=true` で順方向、`false` で逆方向。

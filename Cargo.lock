@@ -943,6 +943,7 @@ dependencies = [
  "open",
  "ratatui",
  "ratatui-textarea",
+ "regex",
  "serde",
  "serde_json",
  "syntect",

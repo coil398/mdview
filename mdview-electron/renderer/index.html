@@ -13,6 +13,13 @@
     <button id="open-btn">ファイルを開く</button>
     <span id="file-name">ファイルが開かれていません</span>
   </div>
+  <div id="search-bar" hidden>
+    <input id="search-input" type="text" placeholder="検索（正規表現）..." spellcheck="false" />
+    <span id="search-count" class="sb-field"></span>
+    <button id="search-prev" title="前のマッチ (Shift+Enter)">&#9650;</button>
+    <button id="search-next" title="次のマッチ (Enter)">&#9660;</button>
+    <button id="search-close" title="閉じる (Esc)">&#10005;</button>
+  </div>
   <div id="app">
     <aside id="toc">
       <div id="toc-header">目次</div>
@@ -39,7 +46,7 @@
     <span id="sb-file" class="sb-field"></span>
     <span id="sb-position" class="sb-field"></span>
     <span id="sb-toc-hint" class="sb-field"></span>
-    <span id="sb-keys" class="sb-hint">[j/k]scroll [g/G]top/end [t]TOC [n]notes [H/L]resize [r]reload [q]quit</span>
+    <span id="sb-keys" class="sb-hint">[j/k]scroll [g/G]top/end [t]TOC [n]notes [H/L]resize [r]reload [q]quit [Cmd/Ctrl+F]search</span>
   </div>
   <script type="module" src="renderer.js"></script>
 </body>

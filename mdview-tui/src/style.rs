@@ -502,7 +502,6 @@ fn cell_to_plain_text(cell: &Cell) -> String {
         .collect::<String>()
 }
 
-
 /// 各列の display width を、ヘッダと全行の最大値から決める（min/max でクランプ）。
 fn compute_table_col_widths(header: &[Cell], rows: &[Vec<Cell>]) -> Vec<usize> {
     let cols = header.len();
