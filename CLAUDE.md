@@ -70,6 +70,7 @@ mdview-tui/         # TUI バイナリ
     types.rs        # StyledSpan, StyledLine
     style.rs        # SpanKind → ratatui::Style 変換・Document → StyledOutput 変換
     highlighter.rs  # Highlighter: syntectによるコードハイライト
+    search.rs       # 検索コア: regex マッチ・smartcase（TUI 層に閉じる。mdview-core 非依存）
     ui/
       viewer.rs     # 本文描画
       toc.rs        # TOCサイドパネル描画
@@ -110,6 +111,9 @@ mdview-electron/    # Electron GUI アプリ（WASM 経由で mdview-core を利
 | `g` / `G` | 先頭 / 末尾へ |
 | `t` | TOCトグル |
 | `r` | 手動リロード |
+| `m` | メモパネルトグル |
+| `/` ・ `Ctrl+F` | 検索開始（vim ライク・正規表現対応） |
+| `n` / `N` | 次 / 前のマッチへ移動 |
 | `Enter` | TOC項目へジャンプ |
 
 ### 注意点
@@ -139,6 +143,7 @@ mdview-electron/    # Electron GUI アプリ（WASM 経由で mdview-core を利
 - **Electron セキュリティ設定**: Phase C で `sandbox: true` / `nodeIntegration: false` / `contextIsolation: true` / `webSecurity: true`（Electron デフォルト）の全保護を維持。`app://` スキームは `secure: true` で登録されているため CSP 的に `'self'` 扱いとなり、renderer 内の相対 import (`'../wasm/mdview_core.js'` 等) は通常 HTTP と同等の URL 解決で動作する
 - **Electron CSP**: Phase C で `style-src 'self' 'unsafe-inline'` を `style-src 'self'; style-src-attr 'unsafe-inline'` に CSP Level 3 ディレクティブ分割。外部 `<style>` 要素の injection を禁止しつつ、Table の `style="text-align:..."` 属性のみ inline 許可する最小権限設計。highlight.js 11 ESM バンドルは DOM 要素に class 名のみ付与し inline style を生成しないため `style-src 'self'` で問題なし（将来 hljs v12+ にアップデートする際は `style.` / `cssText` / `setAttribute('style')` の有無を grep で再確認すること）
 - **Electron マルチウィンドウ対応**: `main.js` の watcher / debounce 状態はシングルトン変数ではなく `WeakMap<WebContents, State>` で保持する（Phase C 導入）。`win.on('closed', ...)` 内で `win.webContents` にアクセスすると `Error: Object has been destroyed` が発生しうるため、`const wc = win.webContents` で事前にキャプチャしてから `stopWatching(wc)` を呼ぶパターンを必須とする
+- **Electron の Cmd+R リロード対応**: Cmd+R は Chromium の `role: 'reload'`（メニュー定義）で renderer をフルリロードし renderer.js の JS 状態を全消去する。`main.js` の `renderer:ready` IPC ハンドラは「1 回限り `removeListener`」ではなくウィンドウ lifetime 常設リスナーにし、`win.on('closed')` で `ipcMain.removeListener` する。これにより Cmd+R 後に `watcherStates` の `watchedPath` からファイル内容を再送信して白紙化を防ぐ（常設化を外すと白紙固着が再発する）
 - **Electron ステータスバー**: TUI の `scroll+1/total` 行番号表示は Electron では意味がない（ピクセル単位スクロール）ため Phase C で `%` 表示のみ採用。全スクロール経路（キーバインド・マウスホイール・TOC クリック・`scrollIntoView`）は `#content` の単一 `scroll` イベントリスナーで `updateStatusBar()` を呼ぶ DRY 設計
 - **Electron .app パッケージング（2026-04-30）**: `electron-builder` v26 を採用。設定は `mdview-electron/package.json` の `"build"` キーに集約（外部設定ファイルなし）。`npm run dist` → `dist/mac-arm64/mdview.app` を生成。`predist` フックで `build:assets`（hljs / themes / mermaid copy + WASM ビルド）を自動実行。`mac.identity = null` で electron-builder の署名は明示スキップし、後段で `codesign --force --deep --sign - dist/mac-arm64/mdview.app` を chained で呼んで **ad-hoc 署名**する 2 段構え（macOS 13+ では arm64 `.app` は ad-hoc でも何らかの署名が必須なため、`identity: null` のままだと「壊れている」エラーで起動できない）。`asarUnpack: ["wasm/**/*"]` で WASM を asar 外に出して `WebAssembly.instantiateStreaming` の MIME チェック問題を回避。`npm run dist:install` は `dist` の後に `rm -rf /Applications/mdview.app && cp -R ... && xattr -cr /Applications/mdview.app` まで一気にやって Spotlight 起動可能にする
 - **Electron の runtime 依存ゼロ原則**: `mdview-electron/package.json` の `dependencies` は **空**（`electron` / `mermaid` / `@highlightjs/cdn-assets` を含めて全て `devDependencies`）。理由は 2 つ: (1) electron-builder は `dependencies` セクションに `electron` があるとビルドエラーで止める仕様、(2) renderer が使う npm パッケージはビルド時に `renderer/vendor/` 配下にコピー済みなので、`.app` 同梱の `app.asar` には node_modules を含める必要がない。`build.files` でも `node_modules/**/*` を指定していないため、サイズは renderer/vendor + wasm のみ
@@ -154,10 +159,12 @@ mdview-electron/    # Electron GUI アプリ（WASM 経由で mdview-core を利
 3. **`mdview-electron/main.js`**: `THEME_BACKGROUNDS` と `VALID_THEME_IDS` に追加し、テーマメニューの `themeSubmenu` に radio 項目を追加する
 4. **`mdview-electron/package.json`**: `copy:themes` スクリプトに対応する hljs CSS ファイル名を追加する（ただし公式 CDN 未収録テーマは自前 CSS を `git add -f` で直接 commit し `copy:themes` には含めない。詳細は下記「自前カスタム hljs CSS の追加手順」参照）
 5. **`README.md`**: テーマ一覧の表を更新する
-6. **WCAG AA コントラスト比確認**: 以下の 3 ペアがいずれも 4.5:1 以上を達成していることを確認する。
+6. **WCAG AA コントラスト比確認**: 以下の 5 ペアがいずれも 4.5:1 以上を達成していることを確認する。
    - `statusbar_fg` vs `statusbar_bg`
    - `toc_highlight_fg` vs `toc_highlight_bg`
    - `code_badge_fg` vs `code_badge_bg`
+   - `search_match_fg` vs `search_match_bg`
+   - `search_current_fg` vs `search_current_bg`
    各ペアの比率は WCAG 公式計算式（相対輝度の比）または信頼できるコントラストチェッカーで算出する。Phase F-2 では `solarized_light()` の 3 フィールドが初期実装で AA 未達（blue accent `#268bd2` → base01 `#586e75` への修正が必要）。
 
 #### syntect テーマ名の確認方法
