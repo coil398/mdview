@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path // empty' 2>/dev/null); case \"$f\" in */mdview-electron/wasm/*|*/mdview-core/pkg/*|*/mdview-electron/renderer/vendor/*|*/mdview-electron/dist/*|*/target/*) echo 'ブロック: 自動生成ファイルです（CLAUDE.md「自動生成ファイルの扱い」）。SSOT を編集して生成コマンドで再生成してください。' >&2; exit 2 ;; esac"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path // empty' 2>/dev/null); case \"$f\" in *.rs) ( cd \"$CLAUDE_PROJECT_DIR\" && PATH=\"$HOME/.cargo/bin:$PATH\" cargo fmt ) ;; */mdview-electron/*.js) node --check \"$f\" || exit 2 ;; esac"
+          }
+        ]
+      }
+    ]
+  }
+}

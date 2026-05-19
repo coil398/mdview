@@ -1,7 +1,7 @@
 /target
 /.serena
 /docs
-/.claude
+/.claude/settings.local.json
 mdview-electron/node_modules/
 mdview-electron/wasm/
 mdview-electron/renderer/vendor/
