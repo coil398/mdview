@@ -1,0 +1,156 @@
+*mdview.txt*  floating window で Markdown を mdview TUI で開く neovim プラグイン
+
+Author:  coil398
+License: MIT
+
+==============================================================================
+CONTENTS                                                        *mdview-contents*
+
+    1. はじめに ............... |mdview-introduction|
+    2. インストール ........... |mdview-install|
+    3. コマンド ............... |mdview-commands|
+    4. 設定 ................... |mdview-setup|
+    5. Lua API ................ |mdview-api|
+    6. トラブルシューティング .. |mdview-troubleshooting|
+    7. ヘルスチェック ......... |mdview-health|
+
+==============================================================================
+1. はじめに                                                  *mdview-introduction*
+
+mdview は Markdown ビューア `mdview` TUI をネイティブな floating window で
+起動する neovim プラグインです。カレントバッファ（またはパス指定）の `.md`
+ファイルを即座にプレビューできます。
+
+==============================================================================
+2. インストール                                                  *mdview-install*
+
+lazy.nvim の例: >lua
+    {
+      'coil398/mdview',
+      cmd = 'Mdview',
+      opts = {},
+    }
+<
+
+mdview バイナリ自体は別途インストールが必要です: >sh
+    cargo install --path mdview-tui
+<
+
+==============================================================================
+3. コマンド                                                      *mdview-commands*
+
+                                                                        *:Mdview*
+:Mdview
+    カレントバッファのファイルを floating window で開きます。
+    バッファに未保存の変更がある場合はエラーになります。
+
+:Mdview {path}                                                   *:Mdview-path*
+    指定した {path} のファイルを floating window で開きます。
+
+:Mdview!                                                         *:Mdview-bang*
+    バッファに未保存の変更があっても、一時ファイルに書き出して強制的に
+    floating window で開きます。終了時に一時ファイルは自動削除されます。
+
+==============================================================================
+4. 設定                                                             *mdview-setup*
+
+`setup()` 関数に table を渡して設定を変更できます: >lua
+    require('mdview').setup({
+      -- mdview バイナリ名または絶対パス（デフォルト: 'mdview'）
+      bin = 'mdview',
+
+      window = {
+        -- 0〜1: editor に対する比率 / 整数: 絶対セル数（デフォルト: 0.85）
+        width  = 0.85,
+        height = 0.85,
+
+        -- nvim_open_win の border 引数（デフォルト: 'rounded'）
+        border = 'rounded',
+
+        -- floating window タイトル（デフォルト: ' mdview '）
+        title  = ' mdview ',
+      },
+
+      -- mdview 終了時に floating window を自動 close するか（デフォルト: true）
+      auto_close_on_exit = true,
+    })
+<
+
+設定値の詳細:
+
+  `bin`                    *mdview-opt-bin*
+    mdview バイナリ名または絶対パス。PATH が通っているなら 'mdview' のまま。
+    絶対パスを指定することで PATH に依存しない設定も可能です。
+
+  `window.width`           *mdview-opt-window-width*
+  `window.height`          *mdview-opt-window-height*
+    floating window のサイズ。
+    - 0 より大きく 1 未満: editor の幅/高さに対する比率
+    - 1 以上の整数: 絶対セル数
+
+  `window.border`          *mdview-opt-window-border*
+    floating window の枠線スタイル。`nvim_open_win` の `border` 引数と同じ
+    値を受け付けます（'none', 'single', 'double', 'rounded', 'solid' 等）。
+
+  `window.title`           *mdview-opt-window-title*
+    floating window のタイトル文字列（neovim 0.9+ のみ表示）。
+
+  `auto_close_on_exit`     *mdview-opt-auto-close*
+    `true` のとき、mdview TUI が終了すると floating window が自動的に
+    閉じます。`false` にすると手動で閉じる必要があります。
+
+==============================================================================
+5. Lua API                                                           *mdview-api*
+
+                                                              *mdview.setup()*
+require('mdview').setup({opts})
+    プラグインを初期化します。{opts} は |mdview-setup| の表を参照。
+    lazy.nvim では `opts = {}` として setup を自動呼び出しできます。
+
+                                                               *mdview.open()*
+require('mdview').open({opts})
+    floating window で mdview を起動します。
+    {opts} は以下のフィールドを持つ table です:
+      - `path`  (string|nil)  開くファイルパス。省略時はカレントバッファ。
+      - `force` (boolean|nil) true のとき未保存変更を tmp 経由で強制表示。
+
+                                                             *mdview.config()*
+require('mdview').config()
+    現在の解決済み設定 table を返します。
+
+==============================================================================
+6. トラブルシューティング                                  *mdview-troubleshooting*
+
+mdview が見つからないエラー~
+    エラーメッセージ: `mdview: 'mdview' が PATH 上に見つかりません`
+    解決: >sh
+        cargo install --path mdview-tui
+<
+    または `setup({ bin = '/path/to/mdview' })` で絶対パスを指定します。
+
+未保存の変更エラー~
+    エラーメッセージ: `バッファに未保存の変更があります`
+    解決: `:w` で保存してから `:Mdview` を実行するか、`:Mdview!` で強制表示。
+
+無名バッファエラー~
+    エラーメッセージ: `バッファにファイル名がありません`
+    解決: ファイルを保存してから `:Mdview` を実行してください。
+    または `:Mdview /path/to/file.md` でパスを直接指定してください。
+
+floating window タイトルが表示されない~
+    neovim 0.9 未満では window タイトルがサポートされていません。
+    neovim 0.9 以上にアップデートしてください。
+
+==============================================================================
+7. ヘルスチェック                                                  *mdview-health*
+
+`:checkhealth mdview` を実行すると、以下の項目を検証します:
+
+  - `mdview` バイナリが PATH 上に存在するか
+  - `mdview --version` コマンドが正常に動作するか
+  - neovim のバージョンが 0.9 以上か（window タイトル機能）
+
+問題がある場合は修正のヒントも表示されます。
+
+==============================================================================
+vim:tw=78:ts=8:ft=help:norl:

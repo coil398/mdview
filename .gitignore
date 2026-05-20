@@ -7,3 +7,4 @@ mdview-electron/wasm/
 mdview-electron/renderer/vendor/
 mdview-electron/dist/
 mdview-core/pkg/
+doc/tags
