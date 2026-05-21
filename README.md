@@ -22,6 +22,7 @@ cd mdview-electron && npm install && npm run dist:install
 - ターミナルから `mdview README.md` で TUI 起動
 - 外部ツール連携用に `mdview-json README.md | jq .` で AST を JSON 出力
 - Spotlight で `mdview` と打つか Dock の `mdview.app` から GUI 起動
+- neovim から `:Mdview` で floating window に TUI を開く（プラグイン導入時。下記「neovim プラグイン」参照）
 
 > ℹ️ wasm-pack 未インストールなら `cargo install wasm-pack` で入れてから上の手順を実行。
 
@@ -33,6 +34,7 @@ cd mdview-electron && npm install && npm run dist:install
 | `mdview-tui` | TUI ビューア（`mdview` コマンド） |
 | `mdview-json` | JSON 出力（外部ツール連携用、`mdview-json` コマンド） |
 | `mdview-electron` | Electron GUI アプリ（WASM 経由で `mdview-core` を利用） |
+| `plugin/` + `lua/mdview/` + `doc/mdview.txt` | neovim プラグイン（Lua、`:Mdview` で TUI を floating 起動） |
 
 ## インストール
 
@@ -75,6 +77,29 @@ npm run dev              # WASM ビルド + electron .
 ```
 
 > ℹ️ ad-hoc 署名のみ・公証なし。Gatekeeper の quarantine flag は `dist:install` 内で `xattr -cr` により除去するため、初回起動時の警告は出ない（はず）。出た場合は Finder で `.app` を右クリック → 「開く」で許可する。
+
+### neovim プラグイン
+
+リポジトリ自体（`coil398/mdview`）が neovim プラグインとして機能する。`plugin/`・`lua/mdview/`・`doc/mdview.txt` をリポジトリルートに配置しているため、lazy.nvim 等から `coil398/mdview` を直接インストールできる。
+
+lazy.nvim の例:
+
+```lua
+{
+  'coil398/mdview',
+  cmd = 'Mdview',
+  config = function()
+    require('mdview').setup({
+      -- 任意設定（省略時はデフォルト値が使われる）
+      -- bin = 'mdview',
+      -- window = { width = 0.85, height = 0.85, border = 'rounded' },
+      -- auto_close_on_exit = true,
+    })
+  end,
+}
+```
+
+別途、上記の TUI バイナリ（`mdview`）が PATH 上に必要。`cargo install --path mdview-tui`（ローカル）または `cargo install --git https://github.com/coil398/mdview mdview-tui` でインストールしておくこと。
 
 ## 使い方
 
@@ -126,6 +151,31 @@ TOC ↔ content ↔ notes の境界はマウスでドラッグしても幅変更
 #### 見出しごとのメモ
 
 右側のメモパネル（`n` でトグル）には、現在ビューポート最上部にある見出しに紐付くメモが表示される。スクロールすると見出しが切り替わり、対応するメモも自動で切り替わる。500ms の debounce で `~/.config/mdview/notes.json` に永続化される。
+
+### neovim プラグイン
+
+`:Mdview` で現バッファのファイルを floating window 内に mdview TUI として開く:
+
+```vim
+:Mdview                    " 現バッファのファイルを開く
+:Mdview path/to/file.md    " 指定パスを開く
+:Mdview!                   " 未保存バッファを tmp 経由で強制的に開く
+```
+
+TUI 内で `q` / `Esc` を押すと TUI が終了し、floating window も自動で閉じる（terminal-mode キーマップは設定しないため TUI 側に直接届く）。
+
+`:checkhealth mdview` でバイナリ検出状況と version を確認できる。詳細は `:help mdview`。
+
+#### 設定オプション
+
+| キー | デフォルト | 説明 |
+|---|---|---|
+| `bin` | `'mdview'` | mdview バイナリ名または絶対パス |
+| `window.width` | `0.85` | 幅（0〜1: editor 比率、整数: 絶対セル数） |
+| `window.height` | `0.85` | 高さ（同上） |
+| `window.border` | `'rounded'` | `nvim_open_win` の `border` 値 |
+| `window.title` | `' mdview '` | floating window のタイトル |
+| `auto_close_on_exit` | `true` | TUI 終了時に window を自動 close |
 
 ### JSON 出力（外部ツール連携）
 
