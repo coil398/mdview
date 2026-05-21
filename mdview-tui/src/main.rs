@@ -5,7 +5,7 @@ use mdview_tui::config::Config;
 use mdview_tui::theme::TuiTheme;
 
 #[derive(Parser)]
-#[command(name = "mdview", about = "TUI Markdown Viewer")]
+#[command(name = "mdview", version, about = "TUI Markdown Viewer")]
 struct Cli {
     file: PathBuf,
     /// テーマ ID を指定して起動（config.json より優先）。

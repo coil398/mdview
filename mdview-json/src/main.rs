@@ -3,7 +3,11 @@ use std::io::Read;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "mdview-json", about = "Output parsed Markdown as JSON")]
+#[command(
+    name = "mdview-json",
+    version,
+    about = "Output parsed Markdown as JSON"
+)]
 struct Cli {
     /// Markdown ファイルパス。省略時は stdin から読む
     file: Option<PathBuf>,
