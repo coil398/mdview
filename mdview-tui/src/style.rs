@@ -201,8 +201,7 @@ fn render_list(
     quote_depth: usize,
 ) {
     let bullet_style = Style::default().fg(theme.list_bullet);
-    let mut counter = start.unwrap_or(1);
-    for (i, item) in items.iter().enumerate() {
+    for (counter, (i, item)) in (start.unwrap_or(1)..).zip(items.iter().enumerate()) {
         // 項目間の見やすさのため、複数ブロックを含む item の前後では空行を入れる
         if i > 0
             && item.blocks.len() > 1
@@ -238,7 +237,6 @@ fn render_list(
             };
             first_line.insert(insert_pos, bullet_span);
         }
-        counter += 1;
     }
 }
 

@@ -444,12 +444,10 @@ impl App {
                             }
                         }
 
-                        KeyCode::Char('i') => {
-                            // メモパネルが開いていて、見出しフォーカスがある場合のみ編集モードへ
-                            if self.notes_open && self.current_anchor.is_some() {
-                                self.notes_edit_mode = true;
-                                self.load_textarea_for_current();
-                            }
+                        // メモパネルが開いていて、見出しフォーカスがある場合のみ編集モードへ
+                        KeyCode::Char('i') if self.notes_open && self.current_anchor.is_some() => {
+                            self.notes_edit_mode = true;
+                            self.load_textarea_for_current();
                         }
 
                         KeyCode::Char('r') => {
@@ -466,20 +464,18 @@ impl App {
                             }
                         }
 
-                        KeyCode::Enter => {
-                            if self.toc_open && !self.toc.is_empty() {
-                                let entry = &self.toc[self.toc_sel];
-                                let target_line = self
-                                    .block_starts
-                                    .get(entry.block_index)
-                                    .copied()
-                                    .unwrap_or(0);
-                                self.scroll = target_line.min(max_scroll);
-                                self.toc_open = false;
-                                self.refresh_current_anchor();
-                                if self.notes_open {
-                                    self.load_textarea_for_current();
-                                }
+                        KeyCode::Enter if self.toc_open && !self.toc.is_empty() => {
+                            let entry = &self.toc[self.toc_sel];
+                            let target_line = self
+                                .block_starts
+                                .get(entry.block_index)
+                                .copied()
+                                .unwrap_or(0);
+                            self.scroll = target_line.min(max_scroll);
+                            self.toc_open = false;
+                            self.refresh_current_anchor();
+                            if self.notes_open {
+                                self.load_textarea_for_current();
                             }
                         }
 
