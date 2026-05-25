@@ -6,10 +6,10 @@ local M = {}
 -- neovim 0.10+ は vim.health.start、それ以前は vim.health.report_start
 local health = vim.health or require('health')
 local h_start = health.start or health.report_start
-local h_ok    = health.ok    or health.report_ok
+local h_ok = health.ok or health.report_ok
 local h_error = health.error or health.report_error
-local h_warn  = health.warn  or health.report_warn
-local h_info  = health.info  or health.report_info
+local h_warn = health.warn or health.report_warn
+local h_info = health.info or health.report_info
 
 function M.check()
   h_start('mdview')
@@ -20,13 +20,10 @@ function M.check()
 
   -- バイナリ検出
   if vim.fn.executable(bin) ~= 1 then
-    h_error(
-      ('`%s` が PATH 上に見つかりません。'):format(bin),
-      {
-        'cargo install --path mdview-tui  (リポジトリルートから)',
-        ('または setup({ bin = "/絶対/パス/mdview" }) でパスを指定してください。'),
-      }
-    )
+    h_error(('`%s` が PATH 上に見つかりません。'):format(bin), {
+      'cargo install --path mdview-tui  (リポジトリルートから)',
+      'または setup({ bin = "/絶対/パス/mdview" }) でパスを指定してください。',
+    })
     return
   end
 
@@ -34,9 +31,15 @@ function M.check()
 
   -- バージョン取得
   local result = vim.fn.system({ bin, '--version' })
-  local code   = vim.v.shell_error
+  local code = vim.v.shell_error
   if code ~= 0 or result == '' then
-    h_warn('`' .. bin .. ' --version` の実行に失敗しました（終了コード: ' .. tostring(code) .. '）')
+    h_warn(
+      '`'
+        .. bin
+        .. ' --version` の実行に失敗しました（終了コード: '
+        .. tostring(code)
+        .. '）'
+    )
   else
     local version = vim.trim(result)
     h_ok('バージョン: ' .. version)

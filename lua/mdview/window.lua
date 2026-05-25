@@ -22,7 +22,7 @@ function M.create_floating(cfg)
   local editor_w = vim.o.columns
   local editor_h = vim.o.lines - vim.o.cmdheight - 1
 
-  local w = resolve_size(cfg.width,  editor_w)
+  local w = resolve_size(cfg.width, editor_w)
   local h = resolve_size(cfg.height, editor_h)
 
   -- 最低サイズを保証（3x3）
@@ -36,27 +36,27 @@ function M.create_floating(cfg)
 
   local win_opts = {
     relative = 'editor',
-    row      = row,
-    col      = col,
-    width    = w,
-    height   = h,
-    style    = 'minimal',
-    border   = cfg.border,
+    row = row,
+    col = col,
+    width = w,
+    height = h,
+    style = 'minimal',
+    border = cfg.border,
   }
 
   -- title は neovim 0.9+ で利用可能
   if vim.fn.has('nvim-0.9') == 1 then
-    win_opts.title          = cfg.title
-    win_opts.title_pos      = 'center'
+    win_opts.title = cfg.title
+    win_opts.title_pos = 'center'
   end
 
   local win = vim.api.nvim_open_win(buf, true, win_opts)
 
   -- terminal バッファらしい外見にする
-  vim.wo[win].number         = false
+  vim.wo[win].number = false
   vim.wo[win].relativenumber = false
-  vim.wo[win].signcolumn     = 'no'
-  vim.wo[win].cursorline     = false
+  vim.wo[win].signcolumn = 'no'
+  vim.wo[win].cursorline = false
 
   return buf, win
 end

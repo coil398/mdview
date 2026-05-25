@@ -9,11 +9,11 @@ vim.g.loaded_mdview = true
 vim.api.nvim_create_user_command('Mdview', function(args)
   local path = args.args ~= '' and args.args or nil
   require('mdview').open({
-    path  = path,
+    path = path,
     force = args.bang,
   })
 end, {
-  bang  = true,
+  bang = true,
   nargs = '?',
   complete = 'file',
   desc = 'Open the current (or specified) Markdown file in a floating mdview TUI window',

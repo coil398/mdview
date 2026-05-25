@@ -31,14 +31,17 @@ function M.resolve_path(opts)
   local bufname = vim.api.nvim_buf_get_name(bufnr)
 
   if bufname == '' then
-    return nil, nil, 'mdview: バッファにファイル名がありません。ファイルを保存してから実行してください。'
+    return nil,
+      nil,
+      'mdview: バッファにファイル名がありません。ファイルを保存してから実行してください。'
   end
 
   -- 未保存の変更チェック
   local modified = vim.api.nvim_get_option_value('modified', { buf = bufnr })
   if modified then
     if not opts.force then
-      return nil, nil,
+      return nil,
+        nil,
         'mdview: バッファに未保存の変更があります。`:w` で保存するか `:Mdview!` で強制表示してください。'
     end
 
@@ -49,7 +52,9 @@ function M.resolve_path(opts)
       vim.fn.writefile(lines, tmp)
     end)
     if not ok then
-      return nil, nil, 'mdview: 一時ファイルへの書き出しに失敗しました: ' .. tostring(write_err)
+      return nil,
+        nil,
+        'mdview: 一時ファイルへの書き出しに失敗しました: ' .. tostring(write_err)
     end
     return tmp, tmp, nil
   end
@@ -81,7 +86,10 @@ function M.launch(buf, win, bin, path, tmp_path, auto_close, window_mod)
     if tmp_path then
       vim.fn.delete(tmp_path)
     end
-    vim.notify('mdview: termopen に失敗しました: ' .. tostring(err_msg), vim.log.levels.ERROR)
+    vim.notify(
+      'mdview: termopen に失敗しました: ' .. tostring(err_msg),
+      vim.log.levels.ERROR
+    )
   end
 
   local ok, job_id = pcall(vim.fn.termopen, { bin, path }, {

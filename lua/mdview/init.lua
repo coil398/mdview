@@ -7,7 +7,7 @@ local M = {}
 local _state = {
   win = nil,
   buf = nil,
-  cfg = nil,  -- setup() で確定した設定
+  cfg = nil, -- setup() で確定した設定
 }
 
 --- プラグインを初期化する。
@@ -45,9 +45,11 @@ function M.open(opts)
   -- バイナリ検出
   if not runner.find_bin(cfg.bin) then
     vim.notify(
-      ('mdview: `%s` が PATH 上に見つかりません。\n' ..
-       '  cargo install --path mdview-tui  でインストールしてください。\n' ..
-       '  または setup({ bin = "/絶対/パス/mdview" }) でパスを指定してください。'):format(cfg.bin),
+      (
+        'mdview: `%s` が PATH 上に見つかりません。\n'
+        .. '  cargo install --path mdview-tui  でインストールしてください。\n'
+        .. '  または setup({ bin = "/絶対/パス/mdview" }) でパスを指定してください。'
+      ):format(cfg.bin),
       vim.log.levels.ERROR
     )
     return
@@ -78,9 +80,9 @@ function M.open(opts)
   -- window が close されたら state をリセット
   local group = vim.api.nvim_create_augroup('MdviewCleanup_' .. win, { clear = true })
   vim.api.nvim_create_autocmd('WinClosed', {
-    group   = group,
+    group = group,
     pattern = tostring(win),
-    once    = true,
+    once = true,
     callback = function()
       if _state.win == win then
         _state.win = nil

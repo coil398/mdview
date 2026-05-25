@@ -16,12 +16,12 @@ local M = {}
 
 ---@type MdviewConfig
 M.defaults = {
-  bin    = 'mdview',
+  bin = 'mdview',
   window = {
-    width  = 0.85,
+    width = 0.85,
     height = 0.85,
     border = 'rounded',
-    title  = ' mdview ',
+    title = ' mdview ',
   },
   auto_close_on_exit = true,
 }
