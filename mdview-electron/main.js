@@ -528,7 +528,31 @@ ipcMain.on('reload:current', (event) => {
 
 // ── アプリ初期化 ───────────────────────────────────────────────────────────
 
+// macOS: Finder のダブルクリック / 「このアプリケーションで開く」で渡される
+// ファイルパスは CLI 引数ではなく open-file イベントで届く。app.whenReady() より
+// 前に発火しうるため will-finish-launching で早期登録し、ready 前のパスはバッファする。
+let appIsReady = false;
+const pendingOpenFiles = [];
+
+function openMarkdownFile(filePath) {
+  const cfg = loadConfig();
+  createWindow(filePath, cfg);
+  Menu.setApplicationMenu(buildMenu(cfg));
+}
+
+app.on('will-finish-launching', () => {
+  app.on('open-file', (event, filePath) => {
+    event.preventDefault();
+    if (appIsReady) {
+      openMarkdownFile(filePath);
+    } else {
+      pendingOpenFiles.push(filePath);
+    }
+  });
+});
+
 app.whenReady().then(() => {
+  appIsReady = true;
   // app://local/<relative-path> を mdview-electron/ 配下に解決する。
   // sandbox 下 renderer でも fetch / WebAssembly.instantiateStreaming が動作する。
   protocol.handle('app', (request) => {
@@ -553,8 +577,21 @@ app.whenReady().then(() => {
   // 起動時に config を同期読み込み（ウィンドウ生成前に themeId が必要）
   const config = loadConfig();
 
-  const filePath = process.argv[2] || null;
-  const win = createWindow(filePath, config);
+  // 起動時のファイル: Finder 経由(open-file バッファ) を優先、無ければ CLI argv。
+  // 複数ファイルが渡された場合はファイルごとにウィンドウを開く。
+  const initialFiles =
+    pendingOpenFiles.length > 0
+      ? pendingOpenFiles.slice()
+      : process.argv[2]
+        ? [process.argv[2]]
+        : [];
+  pendingOpenFiles.length = 0;
+
+  if (initialFiles.length === 0) {
+    createWindow(null, config);
+  } else {
+    initialFiles.forEach((fp) => createWindow(fp, config));
+  }
 
   // メニューを config の theme を反映して構築
   const menu = buildMenu(config);

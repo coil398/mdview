@@ -1,6 +1,6 @@
 {
   "name": "mdview-electron",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Markdown viewer powered by mdview-core WASM",
   "author": "coil398",
   "main": "main.js",
@@ -50,6 +50,18 @@
       ],
       "identity": null,
       "category": "public.app-category.developer-tools"
-    }
+    },
+    "fileAssociations": [
+      {
+        "ext": "md",
+        "name": "Markdown Document",
+        "role": "Viewer"
+      },
+      {
+        "ext": "markdown",
+        "name": "Markdown Document",
+        "role": "Viewer"
+      }
+    ]
   }
 }
