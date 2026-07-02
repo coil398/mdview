@@ -1,8 +1,15 @@
 [package]
 name = "mdview-core"
-version = "0.1.0"
-edition = "2021"
-rust-version = "1.86"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Markdown parsing core for mdview: converts Markdown into a structured, serde-serializable document tree (WASM-capable)."
+keywords = ["markdown", "parser", "commonmark", "wasm"]
+categories = ["text-processing", "parser-implementations", "wasm"]
 
 [lib]
 crate-type = ["lib", "cdylib"]

@@ -38,6 +38,36 @@ cd mdview-electron && npm install && npm run dist:install
 
 ## インストール
 
+### リリース版（GitHub Releases）
+
+ソースビルド不要で使いたい場合は [Releases](https://github.com/coil398/mdview/releases) からビルド済みアーティファクトを取得できる（バージョンタグごとに CI が自動生成）。
+
+| ファイル | 対象 | 中身 |
+|---|---|---|
+| `mdview-<version>-aarch64-apple-darwin.tar.gz` | macOS (Apple Silicon) | `mdview` / `mdview-json` バイナリ |
+| `mdview-<version>-x86_64-apple-darwin.tar.gz` | macOS (Intel) | 同上 |
+| `mdview-<version>-x86_64-unknown-linux-gnu.tar.gz` | Linux (x86_64) | 同上 |
+| `mdview-macos-arm64.zip` | macOS (Apple Silicon) | Electron GUI `mdview.app` |
+
+各アーティファクトには `.sha256` が併置されるので `shasum -a 256 -c <file>.sha256` で検証できる。
+
+CLI バイナリの配置例（PATH の通ったディレクトリへ）:
+
+```bash
+tar xzf mdview-<version>-aarch64-apple-darwin.tar.gz
+cd mdview-<version>-aarch64-apple-darwin
+install -m 755 mdview mdview-json ~/.cargo/bin/
+```
+
+Electron GUI は zip を展開して `mdview.app` を `/Applications/` へ:
+
+```bash
+unzip mdview-macos-arm64.zip
+xattr -cr mdview.app && cp -R mdview.app /Applications/
+```
+
+> ⚠️ Electron の `.app` は ad-hoc 署名のみ・公証なし。Gatekeeper 警告が出たら `.app` を Finder で右クリック →「開く」で許可する。
+
 ### TUI / JSON（Rust）
 
 ローカルクローン経由:
@@ -304,6 +334,24 @@ mdview --theme vscode-dark README.md
 - フォーマット: `cargo fmt --all`
 
 詳細は `CLAUDE.md` を参照。
+
+## リリース（メンテナ向け）
+
+バージョンタグ（`v*`）を push すると `.github/workflows/release.yml` が発火し、GitHub Releases にアーティファクトが自動添付される。
+
+1. バージョンを揃えて bump する（Cargo 側は `Cargo.toml` の `[workspace.package]` の `version` 1 箇所、Electron 側は `mdview-electron/package.json` の `version`）
+2. コミットしてタグを打って push する:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+3. ワークフローが以下を並列ビルドして同一 Release に添付する:
+   - Rust バイナリ（`mdview` / `mdview-json`）を macOS arm64 / macOS x64 / Linux x86_64 の tar.gz で
+   - Electron GUI（`mdview.app`）を macOS arm64 の zip で
+
+> ℹ️ crates.io publish・Homebrew tap は未整備。`Cargo.toml` の publish メタデータは整備済みのため `cargo publish` 自体は将来対応可能。
 
 ## 要件
 

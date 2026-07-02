@@ -1,15 +1,22 @@
 [package]
 name = "mdview-json"
-version = "0.1.0"
-edition = "2021"
-rust-version = "1.86"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Emit mdview's parsed Markdown document tree as JSON for editor and GUI integrations."
+keywords = ["markdown", "json", "cli", "ast"]
+categories = ["command-line-utilities", "text-processing"]
 
 [[bin]]
 name = "mdview-json"
 path = "src/main.rs"
 
 [dependencies]
-mdview-core = { path = "../mdview-core" }
+mdview-core = { path = "../mdview-core", version = "0.1.0" }
 serde_json = "1"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
